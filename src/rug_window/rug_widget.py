@@ -23,7 +23,13 @@ class RugWidget(QOpenGLWidget):
         raise NotImplementedError
 
     def initializeGL(self) -> None:  # noqa: N802 - Qt override
-        """Create the renderer once the OpenGL context exists."""
+        """Create the renderer once the OpenGL context exists.
+
+        Also connects the context's ``aboutToBeDestroyed`` signal to a slot
+        that calls ``makeCurrent()``, ``renderer.release()``, then
+        ``doneCurrent()``. GPU objects can only be freed while the context is
+        current, and nothing else frees them.
+        """
         raise NotImplementedError
 
     def resizeGL(self, width: int, height: int) -> None:  # noqa: N802 - Qt override
