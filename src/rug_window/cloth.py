@@ -54,8 +54,9 @@ class ClothSimulation:
     def positions(self) -> NDArray[np.float32]:
         """Current particle positions, shape ``(rows, cols, 3)``.
 
-        Returns a read-only view of the internal array rather than a copy, so
-        reading it every frame allocates nothing. Writing to it raises
+        Returns a read-only, C-contiguous ``float32`` view of the internal
+        array rather than a copy, so reading it every frame allocates nothing
+        and ``ClothRenderer.draw`` can upload it as is. Writing to it raises
         ``ValueError``. The values change on the next ``step`` call; copy the
         array if you need to keep a snapshot.
         """
