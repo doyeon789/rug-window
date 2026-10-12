@@ -24,6 +24,8 @@ def default_surface_format() -> QSurfaceFormat:
     surface_format.setVersion(3, 3)
     surface_format.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
     surface_format.setAlphaBufferSize(8)
+    # The renderer depth-tests; ask for the depth buffer explicitly.
+    surface_format.setDepthBufferSize(24)
     surface_format.setSamples(4)
     return surface_format
 

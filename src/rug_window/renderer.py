@@ -59,15 +59,6 @@ void main() {
 
 _FRAGMENT_SHADER = """
 #version 330 core
-uniform float opacity;
-out vec4 color;
-void main() {
-    color = vec4(0.0, 0.0, 0.0, opacity);
-}
-"""
-
-_FRAGMENT_SHADER = """
-#version 330 core
 in vec3 v_position;
 in vec3 v_normal;
 in vec2 v_uv;
@@ -274,8 +265,11 @@ def subdivide_grid(positions: NDArray[np.floating], factor: int) -> NDArray[np.f
     rows, cols, _ = positions.shape
     along_rows = _catmull_rom_matrix(rows, factor)
     along_cols = _catmull_rom_matrix(cols, factor)
-    fine = np.einsum("ri,ijk,cj->rck", along_rows, positions, along_cols, optimize=True)
-    return fine.astype(np.float32)
+    # Rows first: (fine_rows, rows) @ (rows, cols * 3).
+    fine = (along_rows @ positions.reshape(rows, -1)).reshape(-1, cols, 3)
+    # Then columns: (fine_rows, 3, cols) @ (cols, fine_cols).
+    fine = (fine.transpose(0, 2, 1) @ along_cols.T).transpose(0, 2, 1)
+    return np.ascontiguousarray(fine, dtype=np.float32)
 
 
 def _view_projection(width: float, height: float) -> NDArray[np.float32]:

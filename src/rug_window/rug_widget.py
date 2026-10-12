@@ -1,8 +1,9 @@
 """Full-screen transparent stage where the rug lies on the desktop."""
 
+import logging
+
 import numpy as np
-from numpy.typing import NDArray
-from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRect, Qt, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
@@ -32,6 +33,8 @@ ICON_REFRESH_MS = 2000
 SETTLED_DISPLACEMENT = 2e-5
 IDLE_FRAMES_BEFORE_SLEEP = 30
 
+logger = logging.getLogger(__name__)
+
 
 class RugWidget(QOpenGLWidget):
     """Frameless, translucent window covering the screen, showing the rug.
@@ -56,7 +59,8 @@ class RugWidget(QOpenGLWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setGeometry(QGuiApplication.primaryScreen().availableGeometry())
+        screen = QGuiApplication.primaryScreen()
+        self.setGeometry(screen.availableGeometry())
 
         world_w = self.width() / PX_PER_METRE
         world_h = self.height() / PX_PER_METRE
@@ -74,6 +78,8 @@ class RugWidget(QOpenGLWidget):
         # The screen edges are walls: no part of the rug may leave the screen.
         self._bounds = (0.0, 0.0, world_w, world_h)
         self._cloth.set_bounds(self._bounds)
+        # Resolution, DPI, or taskbar changes move the walls with the screen.
+        screen.availableGeometryChanged.connect(self._fit_to_screen)
         self._renderer: ClothRenderer | None = None
         self._idle_frames = 0
         self._is_grabbing = False
@@ -81,8 +87,12 @@ class RugWidget(QOpenGLWidget):
         self._grab_goal = np.zeros(3)
         self._grab_held = np.zeros(3)
         self._click_through: bool | None = None
+        self._obstacles = np.zeros((0, 4))
+        self._last_icon_error: str | None = None
 
+        # Coarse timers can fire at ~31 ms on Windows; FRAME_DT assumes 16.
         self._frame_timer = QTimer(self)
+        self._frame_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._frame_timer.timeout.connect(self._tick)
         self._frame_timer.start(FRAME_MS)
         self._icon_timer = QTimer(self)
@@ -187,6 +197,12 @@ class RugWidget(QOpenGLWidget):
             event.ignore()
 
     def _tick(self) -> None:
+        # A lost release event (e.g. the button let go outside the window)
+        # must not leave the rug held forever.
+        left_down = QGuiApplication.mouseButtons() & Qt.MouseButton.LeftButton
+        if self._is_grabbing and not left_down:
+            self._cloth.release()
+            self._is_grabbing = False
         if self._is_grabbing:
             self._idle_frames = 0
             self._grab_held += (self._grab_goal - self._grab_held) * GRAB_FOLLOW
@@ -210,26 +226,56 @@ class RugWidget(QOpenGLWidget):
         over_rug = self._cloth.nearest_particle(x, y, RUG_HIT_RADIUS) is not None
         click_through = not (over_rug or self._is_grabbing)
         if click_through != self._click_through:
-            desktop.set_click_through(int(self.winId()), click_through)
+            # Record the state even if the call fails, so a failing call is
+            # logged once instead of retried every frame.
             self._click_through = click_through
+            try:
+                desktop.set_click_through(int(self.winId()), click_through)
+            except OSError:
+                logger.exception("Could not change click-through")
 
     def _refresh_obstacles(self) -> None:
-        """Turn the desktop icons into hills under the rug."""
+        """Turn the desktop icons into hills under the rug.
+
+        Wakes the simulation only when the icons actually changed, so a
+        settled rug can keep sleeping. If Explorer cannot be read, the last
+        known icons are kept and the error is logged once.
+        """
+        try:
+            icon_rects = desktop.desktop_icon_rects()
+        except OSError as exc:
+            if str(exc) != self._last_icon_error:
+                logger.warning("Could not read desktop icons: %s", exc)
+                self._last_icon_error = str(exc)
+            return
+        self._last_icon_error = None
         ratio = self.devicePixelRatio()
-        origin = self.geometry().topLeft()
         rects: list[tuple[float, float, float, float]] = []
-        for left, top, right, bottom in desktop.desktop_icon_rects():
-            # Physical pixels -> this window's logical pixels -> world metres.
-            x0, y_top = self._to_world(
-                QPointF(left / ratio - origin.x(), top / ratio - origin.y())
-            )
-            x1, y_bottom = self._to_world(
-                QPointF(right / ratio - origin.x(), bottom / ratio - origin.y())
-            )
+        for left, top, right, bottom in icon_rects:
+            # Physical screen pixels -> logical -> this window -> world metres.
+            top_left = self.mapFromGlobal(QPointF(left / ratio, top / ratio))
+            bottom_right = self.mapFromGlobal(QPointF(right / ratio, bottom / ratio))
+            x0, y_top = self._to_world(top_left)
+            x1, y_bottom = self._to_world(bottom_right)
             rects.append((x0, y_bottom, x1, y_top))
-        obstacles: NDArray[np.float64] = np.array(rects, dtype=np.float64)
+        obstacles = np.array(rects, dtype=np.float64).reshape(-1, 4)
+        if np.array_equal(obstacles, self._obstacles):
+            return
+        self._obstacles = obstacles
         self._cloth.set_obstacles(obstacles)
-        # Icons may have moved under the rug: let it settle again.
+        # Icons moved under the rug: let it settle again.
+        self._idle_frames = 0
+
+    def _fit_to_screen(self, available: QRect) -> None:
+        """Follow a change of the screen's usable area and move the walls."""
+        self.setGeometry(available)
+        self._bounds = (
+            0.0,
+            0.0,
+            self.width() / PX_PER_METRE,
+            self.height() / PX_PER_METRE,
+        )
+        self._cloth.set_bounds(self._bounds)
         self._idle_frames = 0
 
     def _held_point(self) -> tuple[float, float, float]:

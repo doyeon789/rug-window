@@ -18,6 +18,7 @@ handle one exception type.
 
 import ctypes
 from ctypes import wintypes
+from functools import lru_cache
 
 import pywintypes
 import win32con
@@ -134,42 +135,23 @@ def set_click_through(hwnd: int, enabled: bool) -> None:
 _LVM_GETITEMCOUNT = 0x1004
 _LVM_GETITEMRECT = 0x100E
 _LVIR_BOUNDS = 0
-_PROCESS_ACCESS = 0x0008 | 0x0010 | 0x0020 | 0x0400  # VM_OPERATION/READ/WRITE, QUERY
+_PROCESS_ACCESS = 0x0008 | 0x0010 | 0x0020  # VM_OPERATION, VM_READ, VM_WRITE
 _MEM_COMMIT_RESERVE = 0x1000 | 0x2000
 _MEM_RELEASE = 0x8000
 _PAGE_READWRITE = 0x04
+_SMTO_ABORTIFHUNG = 0x0002
+# How long to wait for Explorer to answer one message before giving up.
+_EXPLORER_TIMEOUT_MS = 200
 
 
-def desktop_icon_rects() -> list[tuple[int, int, int, int]]:
-    """Return the screen rectangle of every desktop icon (icon plus label).
-
-    The icon positions live inside Explorer's process, in its desktop list
-    view. A ``LVM_GETITEMRECT`` message writes its answer into memory the
-    caller points to, and that memory must be in Explorer's process. So we
-    borrow a small block there (``VirtualAllocEx``), ask for each icon's
-    rectangle into it, and read it back (``ReadProcessMemory``).
-
-    Coordinates are physical pixels relative to the desktop list view, which
-    covers the primary screen from its top-left corner.
-
-    Returns:
-        ``(left, top, right, bottom)`` per icon. Empty if the desktop list view
-        cannot be found (for example, icons hosted under ``WorkerW``).
-
-    Raises:
-        OSError: If Explorer's memory cannot be accessed.
-    """
-    progman = win32gui.FindWindow("Progman", None)
-    defview = win32gui.FindWindowEx(progman, 0, "SHELLDLL_DefView", None)
-    list_view = win32gui.FindWindowEx(defview, 0, "SysListView32", None)
-    if not list_view:
-        return []
-    count = win32gui.SendMessage(list_view, _LVM_GETITEMCOUNT, 0, 0)
-    _, pid = win32process.GetWindowThreadProcessId(list_view)
-
+@lru_cache(maxsize=1)
+def _kernel32() -> ctypes.WinDLL:
+    """Load kernel32 once with 64-bit-safe prototypes for the calls we use."""
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.VirtualAllocEx.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
     kernel32.VirtualAllocEx.argtypes = [
         wintypes.HANDLE,
         ctypes.c_void_p,
@@ -177,6 +159,7 @@ def desktop_icon_rects() -> list[tuple[int, int, int, int]]:
         wintypes.DWORD,
         wintypes.DWORD,
     ]
+    kernel32.VirtualAllocEx.restype = ctypes.c_void_p
     kernel32.VirtualFreeEx.argtypes = [
         wintypes.HANDLE,
         ctypes.c_void_p,
@@ -191,7 +174,61 @@ def desktop_icon_rects() -> list[tuple[int, int, int, int]]:
             ctypes.c_size_t,
             ctypes.POINTER(ctypes.c_size_t),
         ]
+    return kernel32
 
+
+def _ask_explorer(hwnd: int, message: int, wparam: int, lparam: int) -> int:
+    """Send a message to Explorer's window, giving up if it does not answer.
+
+    Plain ``SendMessage`` waits forever, so a hung Explorer would freeze the
+    rug. This waits at most ``_EXPLORER_TIMEOUT_MS``.
+
+    Raises:
+        TimeoutError: If Explorer does not answer in time.
+    """
+    try:
+        _, result = win32gui.SendMessageTimeout(
+            hwnd, message, wparam, lparam, _SMTO_ABORTIFHUNG, _EXPLORER_TIMEOUT_MS
+        )
+    except pywintypes.error as exc:
+        raise TimeoutError(f"Explorer did not answer: {exc}") from exc
+    return int(result)
+
+
+def desktop_icon_rects() -> list[tuple[int, int, int, int]]:
+    """Return the screen rectangle of every desktop icon (icon plus label).
+
+    The icon positions live inside Explorer's process, in its desktop list
+    view. A ``LVM_GETITEMRECT`` message writes its answer into memory the
+    caller points to, and that memory must be in Explorer's process. So we
+    borrow a small block there (``VirtualAllocEx``), ask for each icon's
+    rectangle into it, and read it back (``ReadProcessMemory``). Messages
+    time out instead of waiting on a hung Explorer.
+
+    Returns:
+        ``(left, top, right, bottom)`` per icon in physical screen pixels
+        (the list view's own coordinates shifted by where it sits on the
+        virtual desktop, which need not start at the primary screen). Empty if
+        the desktop list view cannot be found (for example, icons hosted
+        under ``WorkerW``).
+
+    Raises:
+        OSError: If Explorer cannot be reached or its memory accessed
+            (``TimeoutError`` if it does not answer in time).
+    """
+    try:
+        progman = win32gui.FindWindow("Progman", None)
+        defview = win32gui.FindWindowEx(progman, 0, "SHELLDLL_DefView", None)
+        list_view = win32gui.FindWindowEx(defview, 0, "SysListView32", None)
+        if not list_view:
+            return []
+        origin_x, origin_y = win32gui.ClientToScreen(list_view, (0, 0))
+        _, pid = win32process.GetWindowThreadProcessId(list_view)
+    except pywintypes.error as exc:
+        raise OSError(f"Could not find the desktop icons: {exc}") from exc
+    count = _ask_explorer(list_view, _LVM_GETITEMCOUNT, 0, 0)
+
+    kernel32 = _kernel32()
     process = kernel32.OpenProcess(_PROCESS_ACCESS, False, pid)
     if not process:
         raise OSError(ctypes.get_last_error(), "Could not open Explorer process")
@@ -212,13 +249,20 @@ def desktop_icon_rects() -> list[tuple[int, int, int, int]]:
                 process, remote, ctypes.byref(rect), size, None
             ):
                 raise OSError(ctypes.get_last_error(), "WriteProcessMemory failed")
-            if not win32gui.SendMessage(list_view, _LVM_GETITEMRECT, index, remote):
+            if not _ask_explorer(list_view, _LVM_GETITEMRECT, index, remote):
                 continue
             if not kernel32.ReadProcessMemory(
                 process, remote, ctypes.byref(rect), size, None
             ):
                 raise OSError(ctypes.get_last_error(), "ReadProcessMemory failed")
-            rects.append((rect.left, rect.top, rect.right, rect.bottom))
+            rects.append(
+                (
+                    rect.left + origin_x,
+                    rect.top + origin_y,
+                    rect.right + origin_x,
+                    rect.bottom + origin_y,
+                )
+            )
     finally:
         kernel32.VirtualFreeEx(process, remote, 0, _MEM_RELEASE)
         kernel32.CloseHandle(process)

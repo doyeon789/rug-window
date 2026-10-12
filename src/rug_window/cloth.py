@@ -101,8 +101,11 @@ def relax_pairs(
 
     Each end moves half of the length error, scaled by ``stiffness``. Updates
     are applied to all pairs at once, so no particle may appear in two pairs
-    of the same call; ``ClothSimulation`` guarantees this by splitting each
-    constraint direction into odd and even batches.
+    of the same call.
+
+    This is the reference version with index lists. ``ClothSimulation`` runs
+    the same math on grid slices (``_relax_views``), which is faster; the two
+    are checked to cover exactly the same pairs.
 
     Args:
         positions: Particle positions, shape ``(n, 3)``. Modified in place.
@@ -383,7 +386,7 @@ class ClothSimulation:
         self.move_grab(target)
 
     def move_grab(self, target: tuple[float, float, float]) -> None:
-        """Move the held particle's target. Does nothing if nothing is held.
+        """Set where the held particle should be. Only used while one is held.
 
         Args:
             target: New world point to hold the particle at.
@@ -428,8 +431,9 @@ class ClothSimulation:
         have the last word on the cloth's shape. Friction applied after the
         constraints would undo their pull and leave the cloth stretched. Each
         pass also pushes apart layers that came too close (self-collision,
-        pairs found once per step). Then the others are tethered to a held
-        particle, and finally everything is kept
+        pairs found once per step) and puts a held particle back on its
+        target. After the passes, all particles are tethered to the held one,
+        and finally everything is kept
         above the floor (height only, no friction) and inside the walls set by
         ``set_bounds``.
 
