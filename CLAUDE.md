@@ -128,6 +128,9 @@ Split commits into **units the user can review and understand in one sitting**.
   implementation. Then implement in follow-up commits, one coherent piece each.
 - **Propose the split before committing**: show the planned commits (message +
   files + one-line summary each) and wait for approval.
+  - Exception: when addressing PR review comments ("리뷰 반영해줘"), commit and
+    push the fixes directly, then report the commits in the per-comment
+    replies. The review comments already defined the scope.
 
 ### Pull Requests
 
