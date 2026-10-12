@@ -1,7 +1,17 @@
 """Transparent desktop widget that ties simulation, rendering, and input."""
 
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QColor, QGuiApplication, QMouseEvent, QPainter, QPen
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+
+from rug_window.renderer import ClothRenderer
+
+WINDOW_SIZE = (640, 420)
+# Transparent border around the rug, so we can check that clicks pass through
+# empty areas to the desktop icons underneath.
+PLACEHOLDER_MARGIN = 40
+PLACEHOLDER_FILL = QColor(139, 94, 60, 200)
+PLACEHOLDER_EDGE = QColor(92, 58, 33, 230)
 
 
 class RugWidget(QOpenGLWidget):
@@ -12,15 +22,29 @@ class RugWidget(QOpenGLWidget):
     """
 
     def __init__(self) -> None:
-        """Configure the window and start the frame timer.
+        """Configure the window and center it on the primary screen.
 
         The window is frameless, translucent, and a ``Qt.Tool`` window so it
-        has no taskbar button. OpenGL resources are not created here because
-        no context exists yet; see ``initializeGL``. The Win32 helpers in
-        ``desktop`` are not called here either: they need the native window,
-        which exists only after the widget is shown, so ``main`` calls them.
+        has no taskbar button. It is shown without taking focus, because an
+        activated window jumps to the front. OpenGL resources are not created
+        here because no context exists yet; see ``initializeGL``. The Win32
+        helpers in ``desktop`` are not called here either: they need the
+        native window, which exists only after the widget is shown, so
+        ``main`` calls them.
+
+        The frame timer is added together with the cloth simulation; until
+        then nothing moves, so nothing needs repainting.
         """
-        raise NotImplementedError
+        super().__init__()
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.resize(*WINDOW_SIZE)
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        self.move(screen.center() - self.rect().center())
+
+        self._renderer: ClothRenderer | None = None
+        self._drag_offset: QPoint | None = None
 
     def initializeGL(self) -> None:  # noqa: N802 - Qt override
         """Create the renderer once the OpenGL context exists.
@@ -32,8 +56,10 @@ class RugWidget(QOpenGLWidget):
         ``doneCurrent()``. GPU objects can only be freed while the context is
         current, and nothing else frees them. The slot does nothing if
         ``self._renderer`` is ``None``.
+
+        Not wired up yet: ``ClothRenderer`` is implemented in a later step, so
+        ``self._renderer`` stays ``None`` and ``paintGL`` draws a placeholder.
         """
-        raise NotImplementedError
 
     def resizeGL(self, width: int, height: int) -> None:  # noqa: N802 - Qt override
         """Forward the new size to the renderer in device pixels.
@@ -47,14 +73,20 @@ class RugWidget(QOpenGLWidget):
             width: New width in logical pixels.
             height: New height in logical pixels.
         """
-        raise NotImplementedError
+        if self._renderer is None:
+            return
+        ratio = self.devicePixelRatio()
+        self._renderer.resize(round(width * ratio), round(height * ratio))
 
     def paintGL(self) -> None:  # noqa: N802 - Qt override
         """Draw the current cloth state.
 
-        Does nothing while ``self._renderer`` is ``None``.
+        Until the renderer exists (``self._renderer`` is ``None``), draws a
+        temporary flat placeholder rug instead. The placeholder goes away once
+        ``ClothRenderer`` is wired up.
         """
-        raise NotImplementedError
+        if self._renderer is None:
+            self._paint_placeholder()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         """Start dragging the window on a left-button press.
@@ -65,7 +97,12 @@ class RugWidget(QOpenGLWidget):
         Args:
             event: The press event. Accepted, so the click is not passed on.
         """
-        raise NotImplementedError
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        cursor = event.globalPosition().toPoint()
+        self._drag_offset = cursor - self.frameGeometry().topLeft()
+        event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         """Move the window with the cursor while the left button is held.
@@ -79,4 +116,27 @@ class RugWidget(QOpenGLWidget):
         Args:
             event: The move event. Accepted while dragging.
         """
-        raise NotImplementedError
+        is_left_held = bool(event.buttons() & Qt.MouseButton.LeftButton)
+        if not is_left_held or self._drag_offset is None:
+            event.ignore()
+            return
+        self.move(event.globalPosition().toPoint() - self._drag_offset)
+        event.accept()
+
+    def _paint_placeholder(self) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Start from fully transparent pixels; the default clear may be opaque.
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        rug = QRectF(self.rect()).adjusted(
+            PLACEHOLDER_MARGIN,
+            PLACEHOLDER_MARGIN,
+            -PLACEHOLDER_MARGIN,
+            -PLACEHOLDER_MARGIN,
+        )
+        painter.setPen(QPen(PLACEHOLDER_EDGE, 6))
+        painter.setBrush(PLACEHOLDER_FILL)
+        painter.drawRoundedRect(rug, 24, 24)
+        painter.end()
