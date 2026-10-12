@@ -39,3 +39,7 @@ convention = "google"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test names already say what they check.
+"tests/**" = ["D103"]
