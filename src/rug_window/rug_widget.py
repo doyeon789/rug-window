@@ -1,17 +1,28 @@
 """Transparent desktop widget that ties simulation, rendering, and input."""
 
 from PySide6.QtCore import QPoint, QRectF, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QMouseEvent, QPainter, QPen
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QTransform,
+)
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from rug_window.renderer import ClothRenderer
+from rug_window.textures import DEFAULT_RUG_TEXTURE, load_texture
 
 WINDOW_SIZE = (640, 420)
 # Transparent border around the rug, so we can check that clicks pass through
 # empty areas to the desktop icons underneath.
 PLACEHOLDER_MARGIN = 40
-PLACEHOLDER_FILL = QColor(139, 94, 60, 200)
-PLACEHOLDER_EDGE = QColor(92, 58, 33, 230)
+PLACEHOLDER_EDGE = QColor(10, 25, 45, 230)
+# The 1024 px carpet texture is drawn at a quarter size, so one 256 px tile
+# shows a few checker squares and the rug shows several rows of them.
+TEXTURE_SCALE = 0.25
 
 
 class RugWidget(QOpenGLWidget):
@@ -34,6 +45,10 @@ class RugWidget(QOpenGLWidget):
 
         The frame timer is added together with the cloth simulation; until
         then nothing moves, so nothing needs repainting.
+
+        Raises:
+            FileNotFoundError: If the bundled rug texture is missing.
+            ValueError: If the bundled rug texture cannot be decoded.
         """
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
@@ -43,6 +58,7 @@ class RugWidget(QOpenGLWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.move(screen.center() - self.rect().center())
 
+        self._texture = load_texture(DEFAULT_RUG_TEXTURE)
         self._renderer: ClothRenderer | None = None
         self._drag_offset: QPoint | None = None
 
@@ -82,7 +98,8 @@ class RugWidget(QOpenGLWidget):
         """Draw the current cloth state.
 
         Until the renderer exists (``self._renderer`` is ``None``), draws a
-        temporary flat placeholder rug instead. The placeholder goes away once
+        temporary flat placeholder rug, tiled with the carpet texture,
+        instead. The placeholder goes away once
         ``ClothRenderer`` is wired up.
         """
         if self._renderer is None:
@@ -136,7 +153,11 @@ class RugWidget(QOpenGLWidget):
             -PLACEHOLDER_MARGIN,
             -PLACEHOLDER_MARGIN,
         )
+        brush = QBrush(self._texture)
+        brush.setTransform(QTransform.fromScale(TEXTURE_SCALE, TEXTURE_SCALE))
+        # Start the tiling at the rug's corner instead of the window's.
+        painter.setBrushOrigin(rug.topLeft())
         painter.setPen(QPen(PLACEHOLDER_EDGE, 6))
-        painter.setBrush(PLACEHOLDER_FILL)
+        painter.setBrush(brush)
         painter.drawRoundedRect(rug, 24, 24)
         painter.end()
