@@ -28,7 +28,15 @@ AMBIENT_LIGHT: Final = 0.35
 # Screen scale: logical pixels per metre. The camera looks straight down, so
 # world x/y map to screen x/y by this factor (world y grows upward, screen y
 # downward).
-PX_PER_METRE: Final = 450.0
+PX_PER_METRE: Final = 600.0
+# Drop shadow: each point of the rug projected from the lamp onto the floor,
+# drawn as translucent black underneath. Projection pushes the shadow away
+# from the screen centre by ``height / (LIGHT_HEIGHT - height)`` of the
+# point's distance from it, so raised parts (folds, a held corner) cast a
+# longer shadow. A flat rug is treated as raised by SHADOW_BASE_HEIGHT so it
+# still casts a thin rim of shadow.
+SHADOW_BASE_HEIGHT: Final = 0.08
+SHADOW_OPACITY: Final = 0.35
 # Toward-camera depth range (metres) kept by the depth buffer.
 _DEPTH_RANGE = 2.0
 # The simulation grid is drawn this many times finer: smooth curves are
@@ -71,6 +79,30 @@ void main() {
     float lambert = max(dot(normalize(v_normal), to_light), 0.0);
     vec3 base = texture(carpet, v_uv).rgb;
     color = vec4(base * (ambient + (1.0 - ambient) * lambert), 1.0);
+}
+"""
+
+_SHADOW_VERTEX_SHADER = """
+#version 330 core
+layout(location = 0) in vec3 position;
+uniform mat4 mvp;
+uniform vec3 light_position;
+uniform float base_height;
+void main() {
+    // Project from the lamp onto the floor (similar triangles).
+    float height = min(position.z + base_height, light_position.z * 0.9);
+    float stretch = height / (light_position.z - height);
+    vec2 shifted = position.xy + (position.xy - light_position.xy) * stretch;
+    gl_Position = mvp * vec4(shifted, 0.0, 1.0);
+}
+"""
+
+_SHADOW_FRAGMENT_SHADER = """
+#version 330 core
+uniform float opacity;
+out vec4 color;
+void main() {
+    color = vec4(0.0, 0.0, 0.0, opacity);
 }
 """
 
@@ -147,6 +179,7 @@ def solid_mesh_layout(
     r, c = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
     grid_uv = np.stack([c, r], axis=-1).reshape(-1, 2) / cells_per_tile
     ring = _boundary_ring(rows, cols)
+
     uvs = np.concatenate([grid_uv, grid_uv, grid_uv[ring], grid_uv[ring]])
 
     faces = grid_triangle_indices(rows, cols)
@@ -342,6 +375,10 @@ class ClothRenderer:
             shaders.compileShader(_VERTEX_SHADER, GL.GL_VERTEX_SHADER),
             shaders.compileShader(_FRAGMENT_SHADER, GL.GL_FRAGMENT_SHADER),
         )
+        self._shadow_program = shaders.compileProgram(
+            shaders.compileShader(_SHADOW_VERTEX_SHADER, GL.GL_VERTEX_SHADER),
+            shaders.compileShader(_SHADOW_FRAGMENT_SHADER, GL.GL_FRAGMENT_SHADER),
+        )
         self._position_vbo, self._normal_vbo, self._uv_vbo, self._index_buffer = (
             GL.glGenBuffers(4)
         )
@@ -353,6 +390,10 @@ class ClothRenderer:
             TEXTURE_CELLS_PER_TILE * RENDER_SUBDIVISIONS,
         )
         self._index_count = len(indices)
+        # The top face comes first in the index list; the shadow uses only it.
+        self._top_index_count = (
+            2 * (self._render_rows - 1) * (self._render_cols - 1) * 3
+        )
         self._bind_attribute(self._position_vbo, 0, 3)
         self._bind_attribute(self._normal_vbo, 1, 3)
         self._bind_attribute(self._uv_vbo, 2, 2)
@@ -369,6 +410,18 @@ class ClothRenderer:
         GL.glUseProgram(self._program)
         GL.glUniform1f(GL.glGetUniformLocation(self._program, "ambient"), AMBIENT_LIGHT)
         GL.glUniform1i(GL.glGetUniformLocation(self._program, "carpet"), 0)
+        self._shadow_mvp_location = GL.glGetUniformLocation(self._shadow_program, "mvp")
+        self._shadow_light_location = GL.glGetUniformLocation(
+            self._shadow_program, "light_position"
+        )
+        GL.glUseProgram(self._shadow_program)
+        GL.glUniform1f(
+            GL.glGetUniformLocation(self._shadow_program, "base_height"),
+            SHADOW_BASE_HEIGHT,
+        )
+        GL.glUniform1f(
+            GL.glGetUniformLocation(self._shadow_program, "opacity"), SHADOW_OPACITY
+        )
         GL.glUseProgram(0)
 
     def resize(self, width: float, height: float) -> None:
@@ -435,6 +488,23 @@ class ClothRenderer:
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, buffer)
             GL.glBufferData(GL.GL_ARRAY_BUFFER, data.nbytes, data, GL.GL_DYNAMIC_DRAW)
 
+        # Shadow first, flat on the floor, over the cleared (0, 0, 0, 0)
+        # background. Where the rug folds, several triangles cast shadow on
+        # the same pixel; ordinary blending would stack them into darker
+        # patches. MAX blending keeps the darkest single layer instead: the
+        # color stays black and alpha becomes max(opacity, what is there).
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glEnable(GL.GL_BLEND)
+        GL.glBlendEquation(GL.GL_MAX)
+        GL.glUseProgram(self._shadow_program)
+        GL.glUniformMatrix4fv(self._shadow_mvp_location, 1, GL.GL_TRUE, self._mvp)
+        GL.glUniform3fv(self._shadow_light_location, 1, self._light_position)
+        GL.glDrawElements(
+            GL.GL_TRIANGLES, self._top_index_count, GL.GL_UNSIGNED_INT, None
+        )
+        GL.glBlendEquation(GL.GL_FUNC_ADD)
+        GL.glDisable(GL.GL_BLEND)
+
         GL.glEnable(GL.GL_DEPTH_TEST)
         GL.glUseProgram(self._program)
         GL.glUniformMatrix4fv(self._mvp_location, 1, GL.GL_TRUE, self._mvp)
@@ -462,6 +532,7 @@ class ClothRenderer:
         )
         GL.glDeleteVertexArrays(1, [self._vao])
         GL.glDeleteProgram(self._program)
+        GL.glDeleteProgram(self._shadow_program)
 
     def _require_alive(self) -> None:
         if self._released:
