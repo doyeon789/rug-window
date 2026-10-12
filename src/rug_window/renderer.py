@@ -24,7 +24,8 @@ class ClothRenderer:
         """Update the viewport and projection after the widget is resized.
 
         Args:
-            width: Viewport width in device pixels.
+            width: Viewport width in device pixels (logical size times
+                ``devicePixelRatio()``).
             height: Viewport height in device pixels.
         """
         raise NotImplementedError

@@ -4,6 +4,19 @@
 def main() -> int:
     """Create the Qt application, show the rug, and run the event loop.
 
+    Order matters:
+
+    1. Restore the default ``SIGINT`` handler so Ctrl+C in the terminal ends
+       the process. Qt's C++ event loop never hands control back to Python's
+       handler.
+    2. Set a default ``QSurfaceFormat`` with an alpha buffer before creating
+       ``QApplication``, so the translucent OpenGL window is not black.
+    3. Create ``QApplication`` and ``RugWidget``, then ``show()`` the widget.
+    4. Pass ``int(rug.winId())`` to ``desktop.place_above_desktop`` and
+       ``desktop.disable_activation``. This happens here because the native
+       window exists only after ``show()``.
+    5. Run ``app.exec()``.
+
     Returns:
         The process exit code.
     """
