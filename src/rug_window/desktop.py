@@ -17,6 +17,12 @@ pywin32 reports Win32 failures as ``pywintypes.error``, which is not an
 handle one exception type.
 """
 
+import pywintypes
+import win32con
+import win32gui
+
+_SWP_ZORDER_ONLY = win32con.SWP_NOACTIVATE | win32con.SWP_NOMOVE | win32con.SWP_NOSIZE
+
 
 def place_above_desktop(hwnd: int) -> None:
     """Insert the window directly in front of the desktop in the Z-order.
@@ -33,6 +39,11 @@ def place_above_desktop(hwnd: int) -> None:
     Uses ``SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE`` so the call changes only
     the Z-order and does not steal focus.
 
+    Assumes the desktop icons (``SHELLDLL_DefView``) live under ``Progman``.
+    On some setups (older Windows 10 builds, wallpaper slideshow) they live in
+    a ``WorkerW`` window in front of ``Progman`` instead, and the rug would end
+    up behind the icons. Not handled yet.
+
     Args:
         hwnd: Native handle of the top-level window.
 
@@ -40,7 +51,21 @@ def place_above_desktop(hwnd: int) -> None:
         OSError: If ``FindWindow`` returns 0 because ``Progman`` does not
             exist, or if a Win32 call fails.
     """
-    raise NotImplementedError
+    _require_window(hwnd)
+    progman = win32gui.FindWindow("Progman", None)
+    if not progman:
+        raise OSError("Progman window not found")
+    try:
+        insert_after = win32con.HWND_NOTOPMOST
+        candidate = win32gui.GetWindow(progman, win32con.GW_HWNDPREV)
+        while candidate:
+            if candidate != hwnd and not _is_topmost(candidate):
+                insert_after = candidate
+                break
+            candidate = win32gui.GetWindow(candidate, win32con.GW_HWNDPREV)
+        win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, _SWP_ZORDER_ONLY)
+    except pywintypes.error as exc:
+        raise OSError(f"Could not place window above the desktop: {exc}") from exc
 
 
 def disable_activation(hwnd: int) -> None:
@@ -55,4 +80,23 @@ def disable_activation(hwnd: int) -> None:
     Raises:
         OSError: If reading or writing the window style fails.
     """
-    raise NotImplementedError
+    # GetWindowLong/SetWindowLong return 0 instead of raising on a bad handle,
+    # so check the handle first.
+    _require_window(hwnd)
+    try:
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        win32gui.SetWindowLong(
+            hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_NOACTIVATE
+        )
+    except pywintypes.error as exc:
+        raise OSError(f"Could not disable window activation: {exc}") from exc
+
+
+def _require_window(hwnd: int) -> None:
+    if not win32gui.IsWindow(hwnd):
+        raise OSError(f"Not a valid window handle: {hwnd:#x}")
+
+
+def _is_topmost(hwnd: int) -> bool:
+    style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+    return bool(style & win32con.WS_EX_TOPMOST)
