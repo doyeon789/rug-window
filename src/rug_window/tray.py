@@ -8,7 +8,6 @@ rug and to quit.
 from PySide6.QtGui import QAction, QCursor, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from rug_window import desktop
 from rug_window.rug_widget import RugWidget
 
 TOOLTIP = "Rug Window"
@@ -56,7 +55,7 @@ class RugTray(QSystemTrayIcon):
             self._toggle_action.setText(SHOW_TEXT)
             return
         self._rug.show()
-        # Showing may put the window back in the normal Z-order; send it
-        # behind the other apps again.
-        desktop.place_above_desktop(int(self._rug.winId()))
+        # Showing may put the window back in the normal Z-order or re-apply
+        # its styles; restore both.
+        self._rug.attach_to_desktop()
         self._toggle_action.setText(HIDE_TEXT)

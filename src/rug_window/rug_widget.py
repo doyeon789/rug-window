@@ -4,7 +4,7 @@ import logging
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRect, Qt, QTimer
-from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent
+from PySide6.QtGui import QCursor, QGuiApplication, QHideEvent, QMouseEvent, QShowEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from rug_window import desktop
@@ -15,7 +15,7 @@ from rug_window.renderer import PX_PER_METRE, ClothRenderer, screen_to_world
 RUG_ROWS, RUG_COLS, RUG_SPACING = 37, 60, 0.02
 # Lower than the cloth's default grip so a pulled rug slides along the floor
 # and bunches up, instead of only folding where it is held.
-RUG_FLOOR_FRICTION = 0.7
+RUG_FLOOR_FRICTION = 0.8
 FRAME_MS = 16
 FRAME_DT = 1 / 60
 # A grabbed point is lifted this high, so the held corner peels off the floor.
@@ -99,11 +99,57 @@ class RugWidget(QOpenGLWidget):
         self._frame_timer = QTimer(self)
         self._frame_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._frame_timer.timeout.connect(self._tick)
-        self._frame_timer.start(FRAME_MS)
         self._icon_timer = QTimer(self)
         self._icon_timer.timeout.connect(self._refresh_obstacles)
-        self._icon_timer.start(ICON_REFRESH_MS)
+        # Both timers run only while the rug is shown (see showEvent).
         self._refresh_obstacles()
+
+    def attach_to_desktop(self) -> None:
+        """Place the shown window just above the desktop and stop it activating.
+
+        Call after ``show()``: the Win32 helpers need the native window. Also
+        forgets the cached click-through state, so the next frame sets it
+        again on the current native window.
+
+        Raises:
+            OSError: If the window cannot be placed or restyled.
+        """
+        hwnd = int(self.winId())
+        desktop.place_above_desktop(hwnd)
+        desktop.disable_activation(hwnd)
+        self._click_through = None
+
+    def shutdown(self) -> None:
+        """Stop the timers, hide, and free the GPU resources now.
+
+        Call before the application exits. Waiting for the context's
+        ``aboutToBeDestroyed`` signal is not enough: the widget may outlive
+        the application (signal connections keep it referenced), and then
+        the signal never comes while a context can still be made current.
+        Freeing twice is harmless, so the signal stays connected as a backup.
+        """
+        self.hide()
+        self._release_renderer()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
+        """Start simulating and watching the desktop icons.
+
+        Args:
+            event: The show event.
+        """
+        self._frame_timer.start(FRAME_MS)
+        self._icon_timer.start(ICON_REFRESH_MS)
+        super().showEvent(event)
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802 - Qt override
+        """Stop all per-frame work while the rug is hidden.
+
+        Args:
+            event: The hide event.
+        """
+        self._frame_timer.stop()
+        self._icon_timer.stop()
+        super().hideEvent(event)
 
     def initializeGL(self) -> None:  # noqa: N802 - Qt override
         """Create the renderer once the OpenGL context exists.
@@ -301,8 +347,12 @@ class RugWidget(QOpenGLWidget):
     def _release_renderer(self) -> None:
         if self._renderer is None:
             return
+        renderer, self._renderer = self._renderer, None
+        # Disconnect first: the context may outlive this widget's C++ object,
+        # and a late signal must not call back into a deleted widget.
+        self.context().aboutToBeDestroyed.disconnect(self._release_renderer)
         self.makeCurrent()
         try:
-            self._renderer.release()
+            renderer.release()
         finally:
             self.doneCurrent()
