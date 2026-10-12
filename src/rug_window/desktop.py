@@ -39,6 +39,11 @@ def place_above_desktop(hwnd: int) -> None:
     Uses ``SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE`` so the call changes only
     the Z-order and does not steal focus.
 
+    Assumes the desktop icons (``SHELLDLL_DefView``) live under ``Progman``.
+    On some setups (older Windows 10 builds, wallpaper slideshow) they live in
+    a ``WorkerW`` window in front of ``Progman`` instead, and the rug would end
+    up behind the icons. Not handled yet.
+
     Args:
         hwnd: Native handle of the top-level window.
 
@@ -78,10 +83,13 @@ def disable_activation(hwnd: int) -> None:
     # GetWindowLong/SetWindowLong return 0 instead of raising on a bad handle,
     # so check the handle first.
     _require_window(hwnd)
-    style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-    win32gui.SetWindowLong(
-        hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_NOACTIVATE
-    )
+    try:
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        win32gui.SetWindowLong(
+            hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_NOACTIVATE
+        )
+    except pywintypes.error as exc:
+        raise OSError(f"Could not disable window activation: {exc}") from exc
 
 
 def _require_window(hwnd: int) -> None:

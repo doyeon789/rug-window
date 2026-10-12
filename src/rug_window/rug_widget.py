@@ -58,7 +58,11 @@ class RugWidget(QOpenGLWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.move(screen.center() - self.rect().center())
 
-        self._texture = load_texture(DEFAULT_RUG_TEXTURE)
+        # Built once and reused by every paint instead of once per frame.
+        self._texture_brush = QBrush(load_texture(DEFAULT_RUG_TEXTURE))
+        self._texture_brush.setTransform(
+            QTransform.fromScale(TEXTURE_SCALE, TEXTURE_SCALE)
+        )
         self._renderer: ClothRenderer | None = None
         self._drag_offset: QPoint | None = None
 
@@ -141,23 +145,26 @@ class RugWidget(QOpenGLWidget):
         event.accept()
 
     def _paint_placeholder(self) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Start from fully transparent pixels; the default clear may be opaque.
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         rug = QRectF(self.rect()).adjusted(
             PLACEHOLDER_MARGIN,
             PLACEHOLDER_MARGIN,
             -PLACEHOLDER_MARGIN,
             -PLACEHOLDER_MARGIN,
         )
-        brush = QBrush(self._texture)
-        brush.setTransform(QTransform.fromScale(TEXTURE_SCALE, TEXTURE_SCALE))
-        # Start the tiling at the rug's corner instead of the window's.
-        painter.setBrushOrigin(rug.topLeft())
-        painter.setPen(QPen(PLACEHOLDER_EDGE, 6))
-        painter.setBrush(brush)
-        painter.drawRoundedRect(rug, 24, 24)
-        painter.end()
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            # Start from fully transparent pixels; the default clear may be
+            # opaque.
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+            painter.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_SourceOver
+            )
+            # Start the tiling at the rug's corner instead of the window's.
+            painter.setBrushOrigin(rug.topLeft())
+            painter.setPen(QPen(PLACEHOLDER_EDGE, 6))
+            painter.setBrush(self._texture_brush)
+            painter.drawRoundedRect(rug, 24, 24)
+        finally:
+            painter.end()

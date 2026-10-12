@@ -39,6 +39,8 @@ def main() -> int:
     rug = RugWidget()
     rug.show()
 
+    # Let OSError propagate: a rug that cannot sit on the desktop is broken,
+    # and a traceback says why faster than a rug floating over other apps.
     hwnd = int(rug.winId())
     desktop.place_above_desktop(hwnd)
     desktop.disable_activation(hwnd)
