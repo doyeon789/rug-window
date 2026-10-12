@@ -15,15 +15,20 @@ from rug_window.renderer import PX_PER_METRE, ClothRenderer, screen_to_world
 RUG_ROWS, RUG_COLS, RUG_SPACING = 37, 60, 0.02
 # Lower than the cloth's default grip so a pulled rug slides along the floor
 # and bunches up, instead of only folding where it is held.
-RUG_FLOOR_FRICTION = 0.65
+RUG_FLOOR_FRICTION = 0.7
 FRAME_MS = 16
 FRAME_DT = 1 / 60
 # A grabbed point is lifted this high, so the held corner peels off the floor.
 GRAB_LIFT = 0.03
 # Weight: each frame the held point covers only this fraction of the way to
 # the cursor, so a heavy rug lags a beat behind the hand instead of snapping
-# to it. 1 would follow instantly (light); smaller feels heavier.
-GRAB_FOLLOW = 0.25
+# to it. 1 would follow instantly (light); smaller feels heavier. The rug was
+# drawn 1.33x larger (1.78x the area), so 0.25 was scaled down by that
+# (0.14) and then set a touch lighter by feel.
+GRAB_FOLLOW = 0.15
+# The held point never moves faster than this (metres per frame, 3 m/s), so a
+# sudden flick cannot yank the cloth into a tangle in one frame.
+GRAB_MAX_STEP = 0.05
 # The cursor counts as "on the rug" within this distance of a particle. One
 # grid spacing covers every point inside the rug.
 RUG_HIT_RADIUS = RUG_SPACING
@@ -205,7 +210,11 @@ class RugWidget(QOpenGLWidget):
             self._is_grabbing = False
         if self._is_grabbing:
             self._idle_frames = 0
-            self._grab_held += (self._grab_goal - self._grab_held) * GRAB_FOLLOW
+            step = (self._grab_goal - self._grab_held) * GRAB_FOLLOW
+            length = float(np.linalg.norm(step))
+            if length > GRAB_MAX_STEP:
+                step *= GRAB_MAX_STEP / length
+            self._grab_held += step
             self._cloth.move_grab(self._held_point())
         # A settled rug needs no simulation or repaint; only watch the cursor.
         if self._idle_frames >= IDLE_FRAMES_BEFORE_SLEEP:
