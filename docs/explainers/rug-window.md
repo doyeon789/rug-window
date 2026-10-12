@@ -117,11 +117,17 @@ Qt에서 `FramelessWindowHint`로 테두리를 없애고 `WA_TranslucentBackgrou
 | Progman 바로 앞에 세우기 | WorkerW 부착, HWND_BOTTOM | WorkerW는 아이콘 뒤. HWND_BOTTOM은 Progman보다 뒤로 갈 수 있음 (검증 예정) |
 | 함수명 `place_above_desktop` | `place_behind`, `pin_to_desktop_layer` | 호출하는 줄만 봐도 *왜* 부르는지 보임 |
 | 작업표시줄 숨김은 `Qt.Tool` | `desktop.py`에서 직접 스타일 수정 | 더 간단하고, 스타일 덮어쓰기 실수 위험이 없음. 창 성질은 창을 만드는 쪽이 정함 |
+| `positions`는 읽기 전용 뷰 | 내부 배열 그대로, 복사본 | 매 프레임(60fps) 읽어도 복사가 없음. 바깥에서 실수로 쓰면 에러가 나서 시뮬레이션이 몰래 망가지지 않음 |
+| 잘못된 입력은 `ValueError` | 검증 없이 문서로만 | `rows`/`cols` < 3이면 굽힘 제약(2칸 이웃)을 못 만들고, `spacing` ≤ 0이면 천이 성립하지 않음. 이상하게 동작하기보다 바로 멈추는 게 원인 찾기 쉬움 |
+| Progman 없음 → `OSError`, 앞 창 없음 → `HWND_TOP` | 둘 다 조용히 무시 | 바탕화면을 못 찾는 건 진짜 고장이라 알려야 함. 앞 창이 없으면 맨 앞이 곧 Progman 바로 앞 |
+| Win32 함수는 창을 띄운 **뒤** 호출 | `__init__`에서 호출 | 진짜 창(hwnd)은 show 이후에 생기고, Qt가 show 중에 스타일을 다시 덮어쓸 수 있음 |
 
 ## 5. 주의할 점 / 열린 질문
 
 - [ ] QOpenGLWidget + 투명 배경이 Windows에서 제대로 합성되는지 (미검증)
 - [ ] `HWND_BOTTOM`이 Progman보다 뒤로 가는지, Progman 바로 앞에 세우는 방식이 동작하는지 (미검증)
+- [ ] 배경화면 슬라이드쇼 등 일부 상태에서는 아이콘(`SHELLDLL_DefView`)이 Progman이 아닌 `WorkerW` 밑에 있을 수 있음. 그러면 "Progman 바로 앞"이 아이콘 뒤가 될 수도 있음 (리뷰어 지적, 미검증)
+- [ ] `GRAVITY = -9.8`은 1 러그 단위 = 1m 가정. 화면에서 떨어지는 속도가 어색하면 조정 (미검증)
 - [ ] 클릭 시 앞으로 끌려나오는 걸 `WS_EX_NOACTIVATE`로 막을 수 있는지, 드래그와 충돌하지 않는지 (미검증)
 - [ ] Qt가 투명 창에 어떤 확장 스타일을 켜는지 (스타일 값 출력으로 확인 예정)
 - [ ] 창의 투명한 여백이 클릭을 통과시키는지 (막으면 러그 근처 아이콘이 클릭되지 않음, 미검증)
