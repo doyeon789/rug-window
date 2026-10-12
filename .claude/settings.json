@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "defaultMode": "plan",
+    "deny": [
+      "Bash(gh pr merge:*)",
+      "PowerShell(gh pr merge:*)"
+    ]
+  }
+}
