@@ -11,6 +11,8 @@ from numpy.typing import NDArray
 # Fraction of velocity kept each step; acts like air resistance so the cloth
 # settles instead of rippling forever.
 DAMPING = 0.99
+# Rug units per second squared along z. Earth gravity if one rug unit is one
+# metre; tune it if the fall looks too slow or too fast on screen.
 GRAVITY = -9.8
 # More passes make the cloth stiffer but slower; too few make it stretchy.
 CONSTRAINT_ITERATIONS = 8
@@ -40,12 +42,23 @@ class ClothSimulation:
             cols: Number of particles along x.
             spacing: Rest distance between neighboring particles.
             drop_height: Initial z of every particle.
+
+        Raises:
+            ValueError: If ``rows`` or ``cols`` is less than 3 (bending
+                constraints need neighbors two cells apart) or ``spacing`` is
+                not positive.
         """
         raise NotImplementedError
 
     @property
     def positions(self) -> NDArray[np.float32]:
-        """Current particle positions, shape ``(rows, cols, 3)``."""
+        """Current particle positions, shape ``(rows, cols, 3)``.
+
+        Returns a read-only view of the internal array rather than a copy, so
+        reading it every frame allocates nothing. Writing to it raises
+        ``ValueError``. The values change on the next ``step`` call; copy the
+        array if you need to keep a snapshot.
+        """
         raise NotImplementedError
 
     def step(self, dt: float) -> None:
