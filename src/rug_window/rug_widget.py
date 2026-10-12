@@ -12,7 +12,12 @@ class RugWidget(QOpenGLWidget):
     """
 
     def __init__(self) -> None:
-        """Configure window flags, transparency, and the frame timer."""
+        """Configure the window and start the frame timer.
+
+        The window is frameless, translucent, and a ``Qt.Tool`` window so it
+        has no taskbar button. OpenGL resources are not created here because
+        no context exists yet; see ``initializeGL``.
+        """
         raise NotImplementedError
 
     def initializeGL(self) -> None:  # noqa: N802 - Qt override

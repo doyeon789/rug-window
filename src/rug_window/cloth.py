@@ -8,6 +8,13 @@ are in rug units: x/y span the floor plane and z points up, with the floor at
 import numpy as np
 from numpy.typing import NDArray
 
+# Fraction of velocity kept each step; acts like air resistance so the cloth
+# settles instead of rippling forever.
+DAMPING = 0.99
+GRAVITY = -9.8
+# More passes make the cloth stiffer but slower; too few make it stretchy.
+CONSTRAINT_ITERATIONS = 8
+
 
 class ClothSimulation:
     """A grid of particles held together by distance constraints.
@@ -17,9 +24,6 @@ class ClothSimulation:
     - structural: horizontal/vertical neighbors, resist stretching
     - shear: diagonal neighbors, resist skewing
     - bending: neighbors two cells apart, resist folding (controls wrinkles)
-
-    Attributes:
-        positions: Current particle positions, shape ``(rows, cols, 3)``.
     """
 
     def __init__(
@@ -47,10 +51,12 @@ class ClothSimulation:
     def step(self, dt: float) -> None:
         """Advance the simulation by one time step.
 
-        Integrates gravity, relaxes all constraints a fixed number of times,
-        then pushes particles that fell through the floor back onto it.
+        Integrates gravity, relaxes all constraints ``CONSTRAINT_ITERATIONS``
+        times, then pushes particles that fell through the floor back onto it.
 
         Args:
-            dt: Time step in seconds.
+            dt: Time step in seconds. Pass the same value every call (e.g.
+                1/60): Verlet reuses the previous step's displacement as
+                velocity, so a varying ``dt`` makes it slow down or explode.
         """
         raise NotImplementedError
