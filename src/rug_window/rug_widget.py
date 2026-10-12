@@ -1,28 +1,21 @@
 """Transparent desktop widget that ties simulation, rendering, and input."""
 
-from PySide6.QtCore import QPoint, QRectF, Qt
-from PySide6.QtGui import (
-    QBrush,
-    QColor,
-    QGuiApplication,
-    QMouseEvent,
-    QPainter,
-    QPen,
-    QTransform,
-)
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QGuiApplication, QMouseEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
+from rug_window.cloth import ClothSimulation
 from rug_window.renderer import ClothRenderer
-from rug_window.textures import DEFAULT_RUG_TEXTURE, load_texture
 
-WINDOW_SIZE = (640, 420)
-# Transparent border around the rug, so we can check that clicks pass through
-# empty areas to the desktop icons underneath.
-PLACEHOLDER_MARGIN = 40
-PLACEHOLDER_EDGE = QColor(10, 25, 45, 230)
-# The 1024 px carpet texture is drawn at a quarter size, so one 256 px tile
-# shows a few checker squares and the rug shows several rows of them.
-TEXTURE_SCALE = 0.25
+# Fits the renderer's view box (rug footprint plus drop height) at about
+# 450 px per metre.
+WINDOW_SIZE = (580, 470)
+RUG_ROWS, RUG_COLS, RUG_SPACING = 25, 40, 0.03
+DROP_HEIGHT = 0.3
+FRAME_DT = 1 / 60
+# Simulated before the first frame so the rug starts already settled. The
+# live fall is added together with the frame timer.
+SETTLE_STEPS = 240
 
 
 class RugWidget(QOpenGLWidget):
@@ -33,7 +26,7 @@ class RugWidget(QOpenGLWidget):
     """
 
     def __init__(self) -> None:
-        """Configure the window and center it on the primary screen.
+        """Configure the window, center it, and settle the cloth.
 
         The window is frameless, translucent, and a ``Qt.Tool`` window so it
         has no taskbar button. It is shown without taking focus, because an
@@ -43,12 +36,8 @@ class RugWidget(QOpenGLWidget):
         native window, which exists only after the widget is shown, so
         ``main`` calls them.
 
-        The frame timer is added together with the cloth simulation; until
-        then nothing moves, so nothing needs repainting.
-
-        Raises:
-            FileNotFoundError: If the bundled rug texture is missing.
-            ValueError: If the bundled rug texture cannot be decoded.
+        The frame timer is not added yet: the cloth is dropped and settled
+        here, off screen, and drawn standing still.
         """
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
@@ -58,11 +47,9 @@ class RugWidget(QOpenGLWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.move(screen.center() - self.rect().center())
 
-        # Built once and reused by every paint instead of once per frame.
-        self._texture_brush = QBrush(load_texture(DEFAULT_RUG_TEXTURE))
-        self._texture_brush.setTransform(
-            QTransform.fromScale(TEXTURE_SCALE, TEXTURE_SCALE)
-        )
+        self._cloth = ClothSimulation(RUG_ROWS, RUG_COLS, RUG_SPACING, DROP_HEIGHT)
+        for _ in range(SETTLE_STEPS):
+            self._cloth.step(FRAME_DT)
         self._renderer: ClothRenderer | None = None
         self._drag_offset: QPoint | None = None
 
@@ -76,10 +63,9 @@ class RugWidget(QOpenGLWidget):
         ``doneCurrent()``. GPU objects can only be freed while the context is
         current, and nothing else frees them. The slot does nothing if
         ``self._renderer`` is ``None``.
-
-        Not wired up yet: ``ClothRenderer`` is implemented in a later step, so
-        ``self._renderer`` stays ``None`` and ``paintGL`` draws a placeholder.
         """
+        self._renderer = ClothRenderer(RUG_ROWS, RUG_COLS)
+        self.context().aboutToBeDestroyed.connect(self._release_renderer)
 
     def resizeGL(self, width: int, height: int) -> None:  # noqa: N802 - Qt override
         """Forward the new size to the renderer in device pixels.
@@ -101,13 +87,11 @@ class RugWidget(QOpenGLWidget):
     def paintGL(self) -> None:  # noqa: N802 - Qt override
         """Draw the current cloth state.
 
-        Until the renderer exists (``self._renderer`` is ``None``), draws a
-        temporary flat placeholder rug, tiled with the carpet texture,
-        instead. The placeholder goes away once
-        ``ClothRenderer`` is wired up.
+        Does nothing while ``self._renderer`` is ``None``.
         """
         if self._renderer is None:
-            self._paint_placeholder()
+            return
+        self._renderer.draw(self._cloth.positions)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         """Start dragging the window on a left-button press.
@@ -144,27 +128,11 @@ class RugWidget(QOpenGLWidget):
         self.move(event.globalPosition().toPoint() - self._drag_offset)
         event.accept()
 
-    def _paint_placeholder(self) -> None:
-        rug = QRectF(self.rect()).adjusted(
-            PLACEHOLDER_MARGIN,
-            PLACEHOLDER_MARGIN,
-            -PLACEHOLDER_MARGIN,
-            -PLACEHOLDER_MARGIN,
-        )
-        painter = QPainter(self)
+    def _release_renderer(self) -> None:
+        if self._renderer is None:
+            return
+        self.makeCurrent()
         try:
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            # Start from fully transparent pixels; the default clear may be
-            # opaque.
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-            painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
-            painter.setCompositionMode(
-                QPainter.CompositionMode.CompositionMode_SourceOver
-            )
-            # Start the tiling at the rug's corner instead of the window's.
-            painter.setBrushOrigin(rug.topLeft())
-            painter.setPen(QPen(PLACEHOLDER_EDGE, 6))
-            painter.setBrush(self._texture_brush)
-            painter.drawRoundedRect(rug, 24, 24)
+            self._renderer.release()
         finally:
-            painter.end()
+            self.doneCurrent()

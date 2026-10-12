@@ -10,6 +10,24 @@ from rug_window import desktop
 from rug_window.rug_widget import RugWidget
 
 
+def default_surface_format() -> QSurfaceFormat:
+    """Return the OpenGL surface format the rug needs.
+
+    OpenGL 3.3 Core for the renderer's shaders, an 8-bit alpha buffer so the
+    translucent window is not black, and 4x multisampling to smooth the rug's
+    edges.
+
+    Returns:
+        The format to pass to ``QSurfaceFormat.setDefaultFormat``.
+    """
+    surface_format = QSurfaceFormat()
+    surface_format.setVersion(3, 3)
+    surface_format.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+    surface_format.setAlphaBufferSize(8)
+    surface_format.setSamples(4)
+    return surface_format
+
+
 def main() -> int:
     """Create the Qt application, show the rug, and run the event loop.
 
@@ -30,10 +48,7 @@ def main() -> int:
         The process exit code.
     """
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-
-    surface_format = QSurfaceFormat()
-    surface_format.setAlphaBufferSize(8)
-    QSurfaceFormat.setDefaultFormat(surface_format)
+    QSurfaceFormat.setDefaultFormat(default_surface_format())
 
     app = QApplication(sys.argv)
     rug = RugWidget()
