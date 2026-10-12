@@ -21,6 +21,7 @@ rug-window-console = "rug_window.__main__:main"
 
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.22.3",
     "pytest>=8.0",
     "ruff>=0.6",
 ]
