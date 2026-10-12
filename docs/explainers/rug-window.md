@@ -482,3 +482,12 @@ ECC `python-reviewer`로 리뷰하고 Claude가 다시 확인했다.
 **캡처에서 배운 함정**: `grabFramebuffer()` 이미지는 "2배 고해상도" 표시가 붙어 있어서, `QPainter`로 합치면 절반 크기로 그려진다 → `setDevicePixelRatio(1)`.
 
 **테스트 안 된 새 동작** (사용자가 나중에 설계): `screen_to_world`, `bump_heights`, `nearest_particle`, `grab`/끈 묶기, 벽, 자기 충돌, `subdivide_grid`.
+
+### PR #11 리뷰 반영 (2026-10-12)
+
+- **쉬기가 2초마다 깨던 문제**: 아이콘을 2초마다 읽을 때 바뀌지 않아도 깨웠다 → 이전 값과 같으면 그대로 둔다.
+- **탐색기가 멈추면 러그도 멈춤**: `SendMessage`는 답을 끝까지 기다린다 → `SendMessageTimeout`(200 ms). 시간 초과면 예전 아이콘을 쓴다.
+- **에러가 매 프레임 반복**: 타이머 안에서 난 `OSError`는 한 번만 기록하고 계속 동작한다. 클릭 통과 상태는 실패해도 기록해서 16 ms마다 재시도하지 않는다.
+- **여러 모니터**: 아이콘 좌표를 목록창의 화면 위치(`ClientToScreen`)로 보정하고 `mapFromGlobal`로 창 좌표로 바꾼다(모니터마다 배율이 다른 경우는 미검증).
+- **화면이 바뀌면 벽도 따라감**: `availableGeometryChanged` → 창 크기와 벽을 다시 맞추고 깨운다.
+- 그 밖: 그림자를 지울 때 남은 셰이더 삭제, 곡면을 `einsum` 대신 행렬곱 두 번, 정밀 타이머, 놓친 버튼 떼기 감지, 깊이 버퍼 명시, Win32 함수 원형 한 번만 만들기.
