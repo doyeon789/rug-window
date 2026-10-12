@@ -16,7 +16,9 @@ class RugWidget(QOpenGLWidget):
 
         The window is frameless, translucent, and a ``Qt.Tool`` window so it
         has no taskbar button. OpenGL resources are not created here because
-        no context exists yet; see ``initializeGL``.
+        no context exists yet; see ``initializeGL``. The Win32 helpers in
+        ``desktop`` are not called here either: they need the native window,
+        which exists only after the widget is shown.
         """
         raise NotImplementedError
 
@@ -25,7 +27,12 @@ class RugWidget(QOpenGLWidget):
         raise NotImplementedError
 
     def resizeGL(self, width: int, height: int) -> None:  # noqa: N802 - Qt override
-        """Forward the new size to the renderer."""
+        """Forward the new size to the renderer.
+
+        Args:
+            width: New viewport width in pixels.
+            height: New viewport height in pixels.
+        """
         raise NotImplementedError
 
     def paintGL(self) -> None:  # noqa: N802 - Qt override
@@ -33,9 +40,17 @@ class RugWidget(QOpenGLWidget):
         raise NotImplementedError
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
-        """Start dragging the window."""
+        """Start dragging the window.
+
+        Args:
+            event: The press event. Accepted, so the click is not passed on.
+        """
         raise NotImplementedError
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
-        """Move the window with the cursor while dragging."""
+        """Move the window with the cursor while dragging.
+
+        Args:
+            event: The move event. Accepted while dragging.
+        """
         raise NotImplementedError
