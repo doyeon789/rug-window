@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Third-party model files (CGTrader license forbids redistribution)
+assets/rug/
