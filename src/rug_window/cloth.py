@@ -329,6 +329,9 @@ class ClothSimulation:
         self._tether_lengths = np.zeros(len(self._rest), dtype=np.float32)
         self._collision_distance = SELF_COLLISION_SPACINGS * spacing
         self._ignore_rest_distance = SELF_COLLISION_IGNORE_REST_SPACINGS * spacing
+        # Higher than this above the floor counts as "lifted" (a fold, a held
+        # corner); only those are searched for self-collision.
+        self._lift_threshold = 0.25 * spacing
         self._collision_scale = np.array(
             [1.0, 1.0, SELF_COLLISION_Z_SCALE], dtype=np.float32
         )
@@ -346,7 +349,13 @@ class ClothSimulation:
         return self._readonly
 
     def nearest_particle(self, x: float, y: float, max_distance: float) -> int | None:
-        """Return the particle closest to ``(x, y)`` on the floor plane.
+        """Return the particle under ``(x, y)`` on the top layer, seen from above.
+
+        Where the cloth is folded over itself, the cursor is over several
+        layers; the top one is what the user sees and means to grab. So among
+        the particles within ``max_distance`` (measured on the floor plane),
+        only those within half a rug thickness of the highest one count, and
+        the closest of those is returned.
 
         Args:
             x: World x in metres.
@@ -359,8 +368,12 @@ class ClothSimulation:
         """
         flat = self._current.reshape(-1, 3)
         distance = np.hypot(flat[:, 0] - x, flat[:, 1] - y)
-        index = int(np.argmin(distance))
-        return index if distance[index] <= max_distance else None
+        near = np.flatnonzero(distance <= max_distance)
+        if len(near) == 0:
+            return None
+        heights = flat[near, 2]
+        top_layer = near[heights >= heights.max() - RUG_THICKNESS / 2]
+        return int(top_layer[np.argmin(distance[top_layer])])
 
     def grab(self, index: int, target: tuple[float, float, float]) -> None:
         """Pin one particle to a world point, like holding the rug there.
@@ -488,16 +501,35 @@ class ClothSimulation:
         A KD-tree finds the pairs without measuring every pair (2,000
         particles would be 2 million pairs). Distances use heights scaled by
         ``SELF_COLLISION_Z_SCALE``; see there.
+
+        Only particles lifted off the floor are searched around. Particles
+        lying on the floor are one layer and cannot overlap each other, and
+        searching around them would return every grid neighbour (thousands of
+        pairs) only to throw them away.
         """
+        empty = np.zeros(0, dtype=np.intp)
+        lifted = np.flatnonzero(
+            flat[:, 2] > self._floor_heights(flat) + self._lift_threshold
+        )
+        if len(lifted) == 0:
+            return empty, empty
         scaled = flat * self._collision_scale
-        pairs = cKDTree(scaled).query_pairs(
+        # Lifted particles against all particles, returned as plain arrays
+        # (no Python loop over the results).
+        found = cKDTree(scaled[lifted]).sparse_distance_matrix(
+            cKDTree(scaled),
             self._collision_distance * SELF_COLLISION_SEARCH_MARGIN,
             output_type="ndarray",
         )
-        if len(pairs) == 0:
-            empty = np.zeros(0, dtype=np.intp)
+        if len(found) == 0:
             return empty, empty
-        a, b = pairs[:, 0], pairs[:, 1]
+        a = lifted[found["i"]]
+        b = found["j"].astype(np.intp)
+        # Drop self-pairs, and keep a pair of two lifted particles only once.
+        is_lifted = np.zeros(len(flat), dtype=bool)
+        is_lifted[lifted] = True
+        keep = (a != b) & (~is_lifted[b] | (a < b))
+        a, b = a[keep], b[keep]
         rest_gap = np.linalg.norm(self._rest[a] - self._rest[b], axis=1)
         far_in_rest = rest_gap > self._ignore_rest_distance
         return a[far_in_rest], b[far_in_rest]
@@ -517,9 +549,13 @@ class ClothSimulation:
         # Measured in the scaled space; dividing by the scale turns the push
         # back into real metres (a scaled-down height needs a bigger real push).
         push = delta * (overlap / distance * 0.5) / self._collision_scale
-        # A particle can be in several pairs; add every push it gets.
-        np.subtract.at(flat, a, push)
-        np.add.at(flat, b, push)
+        # A particle can be in several pairs; add every push it gets. bincount
+        # sums per particle in one pass (much faster than np.add.at).
+        count = len(flat)
+        for axis in range(3):
+            flat[:, axis] += np.bincount(
+                b, weights=push[:, axis], minlength=count
+            ) - np.bincount(a, weights=push[:, axis], minlength=count)
 
     def _apply_tethers(self, flat: NDArray[np.float32]) -> None:
         """Pull back particles that got farther from the held point than rest."""

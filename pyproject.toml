@@ -12,8 +12,12 @@ dependencies = [
     "scipy>=1.17.1",
 ]
 
-[project.scripts]
+# Windowless launcher (no console) used by the desktop shortcut.
+[project.gui-scripts]
 rug-window = "rug_window.__main__:main"
+
+[project.scripts]
+rug-window-console = "rug_window.__main__:main"
 
 [dependency-groups]
 dev = [
