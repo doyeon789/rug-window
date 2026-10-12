@@ -1,5 +1,14 @@
 """Entry point: ``python -m rug_window``."""
 
+import signal
+import sys
+
+from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtWidgets import QApplication
+
+from rug_window import desktop
+from rug_window.rug_widget import RugWidget
+
 
 def main() -> int:
     """Create the Qt application, show the rug, and run the event loop.
@@ -20,7 +29,21 @@ def main() -> int:
     Returns:
         The process exit code.
     """
-    raise NotImplementedError
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+    surface_format = QSurfaceFormat()
+    surface_format.setAlphaBufferSize(8)
+    QSurfaceFormat.setDefaultFormat(surface_format)
+
+    app = QApplication(sys.argv)
+    rug = RugWidget()
+    rug.show()
+
+    hwnd = int(rug.winId())
+    desktop.place_above_desktop(hwnd)
+    desktop.disable_activation(hwnd)
+
+    return app.exec()
 
 
 if __name__ == "__main__":
