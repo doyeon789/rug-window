@@ -201,6 +201,8 @@ class ClothSimulation:
             for (dr, dc), rest, stiffness in families
             for a, b in _pair_batches(rows, cols, dr, dc)
         ]
+        self._grabbed: int | None = None
+        self._grab_target = np.zeros(3, dtype=np.float32)
 
     @property
     def positions(self) -> NDArray[np.float32]:
@@ -214,12 +216,62 @@ class ClothSimulation:
         """
         return self._readonly
 
+    def nearest_particle(self, x: float, y: float, max_distance: float) -> int | None:
+        """Return the particle closest to ``(x, y)`` on the floor plane.
+
+        Args:
+            x: World x in metres.
+            y: World y in metres.
+            max_distance: Ignore particles farther than this (metres).
+
+        Returns:
+            The flat particle index (``r * cols + c``), or ``None`` if no
+            particle is within ``max_distance``.
+        """
+        flat = self._current.reshape(-1, 3)
+        distance = np.hypot(flat[:, 0] - x, flat[:, 1] - y)
+        index = int(np.argmin(distance))
+        return index if distance[index] <= max_distance else None
+
+    def grab(self, index: int, target: tuple[float, float, float]) -> None:
+        """Pin one particle to a world point, like holding the rug there.
+
+        Until ``release``, every ``step`` keeps the particle at the target
+        (see ``move_grab``) while the rest of the cloth follows through the
+        constraints. Particles still gripped by the floor resist, so pulling
+        piles the cloth into wrinkles.
+
+        Args:
+            index: Flat particle index (``r * cols + c``).
+            target: World point to hold it at.
+
+        Raises:
+            IndexError: If ``index`` is not a particle of this grid.
+        """
+        if not 0 <= index < self._current.shape[0] * self._current.shape[1]:
+            raise IndexError(f"No particle {index}")
+        self._grabbed = index
+        self.move_grab(target)
+
+    def move_grab(self, target: tuple[float, float, float]) -> None:
+        """Move the held particle's target. Does nothing if nothing is held.
+
+        Args:
+            target: New world point to hold the particle at.
+        """
+        self._grab_target[:] = target
+
+    def release(self) -> None:
+        """Let go of the held particle. The wrinkles it made stay."""
+        self._grabbed = None
+
     def step(self, dt: float) -> None:
         """Advance the simulation by one time step.
 
         Integrates gravity, relaxes all constraints ``CONSTRAINT_ITERATIONS``
         times, then pushes particles that fell through the floor back onto it
-        and cancels part of their horizontal movement (floor friction).
+        and cancels part of their horizontal movement (floor friction). A
+        grabbed particle is held at its target throughout.
 
         Args:
             dt: Time step in seconds. Pass the same value every call (e.g.
@@ -237,11 +289,20 @@ class ClothSimulation:
         np.copyto(self._current, nxt)
 
         flat = self._current.reshape(-1, 3)
+        self._pin_grabbed(flat)
         for _ in range(CONSTRAINT_ITERATIONS):
             for a, b, rest, stiffness in self._batches:
                 relax_pairs(flat, a, b, rest, stiffness)
+            # The held particle acts as if infinitely heavy: undo whatever the
+            # constraints did to it.
+            self._pin_grabbed(flat)
 
         self._collide_with_floor()
+        self._pin_grabbed(flat)
+
+    def _pin_grabbed(self, flat: NDArray[np.float32]) -> None:
+        if self._grabbed is not None:
+            flat[self._grabbed] = self._grab_target
 
     def _collide_with_floor(self) -> None:
         floor = RUG_THICKNESS / 2
