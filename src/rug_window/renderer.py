@@ -4,13 +4,17 @@ Must only be used while an OpenGL context is current (inside
 ``QOpenGLWidget.initializeGL`` / ``paintGL``, or after ``makeCurrent()``).
 """
 
+from typing import Final
+
 import numpy as np
 from numpy.typing import NDArray
 
-# Direction the light comes from (normalized when used). Tilted instead of
-# straight down: a light directly overhead lights a flat rug evenly, so small
-# wrinkles would not show.
-LIGHT_DIRECTION = (-0.4, 0.3, 1.0)
+# Unit-less world-space vector (z up, same axes as ClothSimulation) pointing
+# from the surface *toward* the light; normalized when used. Shading uses
+# max(0, normal . LIGHT_DIRECTION), so flipping the sign would invert it.
+# Tilted instead of straight up: an overhead light lights a flat rug evenly,
+# so small wrinkles would not show.
+LIGHT_DIRECTION: Final[tuple[float, float, float]] = (-0.4, 0.3, 1.0)
 
 
 class ClothRenderer:
@@ -26,6 +30,10 @@ class ClothRenderer:
     2. ``resize`` / ``draw``: use them.
     3. ``release``: free them. Python garbage collection does not free GPU
        objects, so the owner must call this before the context is destroyed.
+
+    Attributes:
+        rows: Grid rows given at construction; ``draw`` checks against it.
+        cols: Grid columns given at construction; ``draw`` checks against it.
     """
 
     def __init__(self, rows: int, cols: int) -> None:
@@ -37,17 +45,25 @@ class ClothRenderer:
 
         Raises:
             ValueError: If ``rows`` or ``cols`` is less than 2, since at least
-                one cell is needed to form a triangle.
+                one cell is needed to form a triangle. ``ClothSimulation``
+                requires 3 for its bending constraints, so it is always the
+                stricter of the two.
         """
         raise NotImplementedError
 
     def resize(self, width: int, height: int) -> None:
         """Update the viewport and projection after the widget is resized.
 
+        A width or height of 0 (e.g. a minimized window) is ignored, so the
+        projection never divides by zero.
+
         Args:
             width: Viewport width in device pixels (logical size times
                 ``devicePixelRatio()``).
             height: Viewport height in device pixels.
+
+        Raises:
+            RuntimeError: If called after ``release``.
         """
         raise NotImplementedError
 
@@ -65,12 +81,15 @@ class ClothRenderer:
         Raises:
             ValueError: If the shape does not match the grid, the dtype is not
                 ``float32``, or the array is not C-contiguous.
+            RuntimeError: If called after ``release``.
         """
         raise NotImplementedError
 
     def release(self) -> None:
         """Free the shaders and GPU buffers.
 
-        Safe to call more than once. The renderer must not be used afterwards.
+        The first call needs the owning context to be current. Later calls do
+        nothing and need no context. Afterwards ``draw`` and ``resize`` raise
+        ``RuntimeError``.
         """
         raise NotImplementedError

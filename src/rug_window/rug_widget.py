@@ -25,10 +25,13 @@ class RugWidget(QOpenGLWidget):
     def initializeGL(self) -> None:  # noqa: N802 - Qt override
         """Create the renderer once the OpenGL context exists.
 
+        Stores it in ``self._renderer``, which is ``None`` until this runs.
+
         Also connects the context's ``aboutToBeDestroyed`` signal to a slot
-        that calls ``makeCurrent()``, ``renderer.release()``, then
+        that calls ``makeCurrent()``, ``self._renderer.release()``, then
         ``doneCurrent()``. GPU objects can only be freed while the context is
-        current, and nothing else frees them.
+        current, and nothing else frees them. The slot does nothing if
+        ``self._renderer`` is ``None``.
         """
         raise NotImplementedError
 
@@ -36,8 +39,9 @@ class RugWidget(QOpenGLWidget):
         """Forward the new size to the renderer in device pixels.
 
         Qt passes the size in logical pixels. It is multiplied by
-        ``devicePixelRatio()`` before it is forwarded, because the renderer
-        works in device pixels.
+        ``devicePixelRatio()`` and rounded with ``round()`` before it is
+        forwarded, because the renderer works in device pixels and the ratio
+        can be fractional (e.g. 1.25). ``int()`` would truncate it.
 
         Args:
             width: New width in logical pixels.
@@ -46,7 +50,10 @@ class RugWidget(QOpenGLWidget):
         raise NotImplementedError
 
     def paintGL(self) -> None:  # noqa: N802 - Qt override
-        """Draw the current cloth state."""
+        """Draw the current cloth state.
+
+        Does nothing while ``self._renderer`` is ``None``.
+        """
         raise NotImplementedError
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
