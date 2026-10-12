@@ -121,10 +121,18 @@ Qt에서 `FramelessWindowHint`로 테두리를 없애고 `WA_TranslucentBackgrou
 | 잘못된 입력은 `ValueError` | 검증 없이 문서로만 | `rows`/`cols` < 3이면 굽힘 제약(2칸 이웃)을 못 만들고, `spacing` ≤ 0이면 천이 성립하지 않음. 이상하게 동작하기보다 바로 멈추는 게 원인 찾기 쉬움 |
 | Progman 없음 → `OSError`, 앞 창 없음 → `HWND_TOP` | 둘 다 조용히 무시 | 바탕화면을 못 찾는 건 진짜 고장이라 알려야 함. 앞 창이 없으면 맨 앞이 곧 Progman 바로 앞 |
 | Win32 함수는 창을 띄운 **뒤** 호출 | `__init__`에서 호출 | 진짜 창(hwnd)은 show 이후에 생기고, Qt가 show 중에 스타일을 다시 덮어쓸 수 있음 |
+| Win32 헬퍼 호출은 `main()`이 맡음 | `RugWidget` 안에서 (`showEvent`) | 위젯은 Win32를 모르게 두고, "show 다음에 부른다"는 순서를 조립하는 곳 한 군데에서 보이게 |
+| 예외는 `OSError`로 통일 | `pywintypes.error` 그대로 | pywin32 에러는 `OSError`가 아니다(확인함). `FindWindow`는 실패해도 0을 돌려줄 뿐이라 직접 확인해서 올린다 |
+| Progman 앞으로 걸어가며 topmost 창 건너뛰기 | 바로 앞 창 뒤에 세우기 | 바로 앞이 topmost 창(작업표시줄 등)이면 그 뒤에 선 러그도 topmost가 되어 모든 앱 위로 뜬다 (미검증). 없으면 `HWND_NOTOPMOST` |
+| 왼쪽 버튼으로만 드래그, `mouseReleaseEvent` 없음 | release 핸들러로 드래그 종료 | move 이벤트는 버튼을 누를 때만 온다. 대신 오른쪽 버튼으로 끌리는 걸 막는다 |
+| 렌더러는 device pixel, 변환은 위젯에서 | 각자 알아서 | HiDPI에서 logical × `devicePixelRatio()` = device. 변환을 한 곳에서만 |
+| ruff `"D"` 규칙 켬 | 설정만 두기 | `pydocstyle` 설정은 `"D"`가 `select`에 없으면 아무 일도 안 한다 |
 
 ## 5. 주의할 점 / 열린 질문
 
 - [ ] QOpenGLWidget + 투명 배경이 Windows에서 제대로 합성되는지 (미검증)
+- [ ] 다른 창을 모두 최소화했을 때 Progman 앞이 topmost 창이 되는지, topmost 건너뛰기가 러그를 앱 위로 띄우지 않는지 (PR #6 리뷰, 미검증)
+- [ ] Qt `resizeGL`이 정말 logical pixel을 주는지 (미검증)
 - [ ] `HWND_BOTTOM`이 Progman보다 뒤로 가는지, Progman 바로 앞에 세우는 방식이 동작하는지 (미검증)
 - [ ] 배경화면 슬라이드쇼 등 일부 상태에서는 아이콘(`SHELLDLL_DefView`)이 Progman이 아닌 `WorkerW` 밑에 있을 수 있음. 그러면 "Progman 바로 앞"이 아이콘 뒤가 될 수도 있음 (리뷰어 지적, 미검증)
 - [ ] `GRAVITY = -9.8`은 1 러그 단위 = 1m 가정. 화면에서 떨어지는 속도가 어색하면 조정 (미검증)
@@ -282,3 +290,13 @@ Qt에서 `FramelessWindowHint`로 테두리를 없애고 `WA_TranslucentBackgrou
 - `dt`는 **고정값 1/60초**로 넘긴다.
   - 이유: Verlet은 "지난번 움직인 거리"를 재사용한다. 사진 간격이 16ms → 32ms로 두 배가 되면 실제로는 두 배를 움직여야 하는데 Verlet은 지난번(16ms) 거리만큼만 움직인다 → 갑자기 느려진다. 반대로 간격이 줄면 너무 많이 움직여서 에너지가 생기고 천이 터질 수 있다.
   - 대가: 컴퓨터가 버벅이면 애니메이션이 조금 느려질 뿐, 천은 안정적이다.
+
+### PR #6 리뷰 반영 (2026-10-12)
+
+ECC `python-reviewer`로 리뷰하고 Claude가 다시 확인했다.
+
+- **pywin32 예외**: `pywintypes.error`의 부모는 `Exception`이다. `OSError`가 아니다. 그래서 문서에 `OSError`라고 쓰려면 직접 바꿔서 올려야 한다.
+- **줄 서기 함정**: Progman 바로 앞 사람이 "항상 맨 앞" 무리(topmost)일 수 있다 → 그 뒤에 서면 나도 그 무리가 된다 → 앞으로 걸어가며 topmost는 건너뛴다.
+- **리뷰어와 다르게 판단한 것**: `mouseReleaseEvent`는 추가하지 않았다. 근거는 "Qt는 버튼을 누를 때만 move를 보낸다". 대신 "왼쪽 버튼일 때만 이동"을 명시했다. 리뷰어 의견을 그대로 받지 않고 근거를 대서 반박할 수 있다.
+- **스위치는 있는데 전원이 꺼진 설정**: `[tool.ruff.lint.pydocstyle]`는 `"D"`를 켜야 동작한다. 켠 뒤 docstring 없는 함수에 `D103`이 뜨는 것을 확인했다.
+- `renderer.py`의 GPU 정리(`release()`)와 `draw()` 입력 검증은 `renderer.py` 리뷰 때 다룬다.
