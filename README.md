@@ -5,8 +5,9 @@ desktop, above the icons and below every other window. Grab it with the mouse
 to drag it around or fold it over itself; it bumps up over the icons hidden
 underneath.
 
-Inspired by [Terkel's macOS experiment](https://x.com/terkelg). This is an
-independent Windows implementation (Python, PySide6, OpenGL).
+Inspired by a macOS experiment by Terkel ([@terkelg](https://x.com/terkelg),
+GitHub Next). This is an independent Windows implementation (Python, PySide6,
+OpenGL) and shares no code with it.
 
 ## Download and run (Windows 10/11)
 
