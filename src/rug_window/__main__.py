@@ -28,8 +28,10 @@ def default_surface_format() -> QSurfaceFormat:
     """Return the OpenGL surface format the rug needs.
 
     OpenGL 3.3 Core for the renderer's shaders, an 8-bit alpha buffer so the
-    translucent window is not black, and 4x multisampling to smooth the rug's
-    edges.
+    translucent window is not black, and 2x multisampling to smooth the rug's
+    edges. Each extra sample multiplies the memory of the screen-sized
+    buffers, so 2x is the chosen trade-off between smooth edges and memory
+    (measurements in ``docs/explainers/reduce-memory.md``).
 
     Returns:
         The format to pass to ``QSurfaceFormat.setDefaultFormat``.
@@ -40,7 +42,7 @@ def default_surface_format() -> QSurfaceFormat:
     surface_format.setAlphaBufferSize(8)
     # The renderer depth-tests; ask for the depth buffer explicitly.
     surface_format.setDepthBufferSize(24)
-    surface_format.setSamples(4)
+    surface_format.setSamples(2)
     return surface_format
 
 
