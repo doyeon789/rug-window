@@ -437,23 +437,24 @@ class ClothSimulation:
         """Let go of the held particle. The wrinkles it made stay."""
         self._grabbed = None
 
-    def max_displacement(self) -> float:
-        """Return how far the fastest particle moved in the last step (metres).
-
-        Near zero means the cloth has settled.
-        """
-        return float(np.abs(self._current - self._previous).max())
-
     def displacement_percentile(self, percent: float) -> float:
         """Return how far particles moved in the last step, at a percentile.
 
-        ``displacement_percentile(99)`` is the distance that 99% of the
-        particles stayed under (metres). Unlike ``max_displacement``, a few
+        Each particle's movement is its straight-line (Euclidean, over x, y,
+        z) distance from its previous position. ``displacement_percentile(99)``
+        is the distance that 99% of the particles stayed under, so a few
         particles that never quite stop (a crumpled pile keeps jostling) do
-        not count.
+        not count, unlike the fastest particle alone.
 
         Args:
-            percent: Percentile, 0..100.
+            percent: Percentile in 0..100.
+
+        Returns:
+            The distance in metres.
+
+        Raises:
+            ValueError: If ``percent`` is outside 0..100 (from
+                ``np.percentile``).
         """
         moved = np.linalg.norm(self._current - self._previous, axis=2)
         return float(np.percentile(moved, percent))
