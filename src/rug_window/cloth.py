@@ -52,6 +52,15 @@ SELF_COLLISION_Z_SCALE = 0.7
 # distance, then pushed apart in every constraint pass (searching is the slow
 # part, pushing is cheap).
 SELF_COLLISION_SEARCH_MARGIN = 1.5
+# How strongly a layer resting on another layer grips it (0..1): the fraction
+# of its sideways slip over the layer below that is cancelled in each
+# constraint pass. Without it a released fold slides back over the rug like
+# plastic on ice and the rug unfolds by itself. Applied every pass, so 0.4
+# already cancels about 98% of the slip per step (1 - 0.6 ** 8).
+SELF_FRICTION = 0.4
+# Pairs count as touching (for friction) up to this multiple of the collision
+# distance, so a fold resting exactly at the collision distance still grips.
+SELF_FRICTION_CONTACT = 1.1
 
 # Desktop icons under the rug: each raises the floor into a flat-topped hill
 # this high, sloping down to the plain floor over BUMP_FALLOFF around it.
@@ -443,7 +452,8 @@ class ClothSimulation:
         all constraints ``CONSTRAINT_ITERATIONS`` times, so the constraints
         have the last word on the cloth's shape. Friction applied after the
         constraints would undo their pull and leave the cloth stretched. Each
-        pass also pushes apart layers that came too close (self-collision,
+        pass starts with friction between layers resting on each other and
+        also pushes apart layers that came too close (self-collision,
         pairs found once per step) and puts a held particle back on its
         target. After the passes, all particles are tethered to the held one,
         and finally everything is kept
@@ -471,6 +481,7 @@ class ClothSimulation:
         grid = self._current
         close_pairs = self._find_close_layers(flat)
         for _ in range(CONSTRAINT_ITERATIONS):
+            self._apply_self_friction(flat, close_pairs)
             for pairs, rest, stiffness in self._batches:
                 for a_slice, b_slice in pairs:
                     _relax_views(grid[a_slice], grid[b_slice], rest, stiffness)
@@ -533,6 +544,55 @@ class ClothSimulation:
         rest_gap = np.linalg.norm(self._rest[a] - self._rest[b], axis=1)
         far_in_rest = rest_gap > self._ignore_rest_distance
         return a[far_in_rest], b[far_in_rest]
+
+    def _apply_self_friction(
+        self, flat: NDArray[np.float32], pairs: IndexPairs
+    ) -> None:
+        """Make layers resting on each other grip, like the floor does.
+
+        For each touching pair, the upper particle's sideways movement so far
+        this step is pulled toward the lower particle's movement (averaged
+        over all particles below it). Relative, not absolute: when the lower
+        layer is dragged, the layer on top rides along instead of being held
+        back. The held particle is skipped so the hand can still pull a fold
+        open.
+
+        Called at the start of every constraint pass, not once per step: the
+        bending constraints push a fold open in every pass, and friction
+        applied only once lets that push through, so the fold creeps open.
+        Applied after the passes, it would leave the constraints violated and
+        the cloth visibly stretched; at the start of each pass, the
+        constraints still have the last word.
+        """
+        a, b = pairs
+        if len(a) == 0:
+            return
+        delta = (flat[b] - flat[a]) * self._collision_scale
+        distance = np.linalg.norm(delta, axis=1)
+        touching = distance < self._collision_distance * SELF_FRICTION_CONTACT
+        a, b = a[touching], b[touching]
+        a_is_upper = flat[a, 2] > flat[b, 2]
+        upper = np.where(a_is_upper, a, b)
+        lower = np.where(a_is_upper, b, a)
+        if self._grabbed is not None:
+            free = upper != self._grabbed
+            upper, lower = upper[free], lower[free]
+        if len(upper) == 0:
+            return
+        previous = self._previous.reshape(-1, 3)
+        moved = flat[:, :2] - previous[:, :2]
+        count = len(flat)
+        partners = np.bincount(upper, minlength=count)
+        has_partner = partners > 0
+        for axis in range(2):
+            lower_moved = (
+                np.bincount(upper, weights=moved[lower, axis], minlength=count)[
+                    has_partner
+                ]
+                / partners[has_partner]
+            )
+            slip = moved[has_partner, axis] - lower_moved
+            flat[has_partner, axis] -= slip * SELF_FRICTION
 
     def _separate_layers(self, flat: NDArray[np.float32], pairs: IndexPairs) -> None:
         """Push apart the given pairs that are closer than the collision distance.
