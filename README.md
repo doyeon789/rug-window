@@ -12,7 +12,7 @@ OpenGL) and shares no code with it.
 ## Download and run (Windows 10/11)
 
 1. Download `RugWindow-v<version>-windows.zip` from
-   [Releases](https://github.com/doyeon789/rug-window/releases).
+   [Releases](https://github.com/pizza-playground/rug-window/releases).
 2. Unzip it anywhere and double-click `RugWindow.exe`.
    - The exe is not code-signed, so Windows SmartScreen may warn
      ("Unknown publisher"). Choose **More info → Run anyway**.
@@ -25,8 +25,8 @@ OpenGL) and shares no code with it.
 |---|---|
 | Drag the rug | Press the left button on the rug and move |
 | Fold it | Grab an edge or corner and pull it back over the rug |
-| Hide / show | Tray icon → 러그 숨기기 / 러그 보이기 |
-| Quit | Tray icon → 끄기 |
+| Hide / show | Tray icon → Hide rug / Show rug |
+| Quit | Tray icon → Quit |
 
 Clicks off the rug go to the desktop as usual. Only one copy runs at a time.
 Logs are written to `%LOCALAPPDATA%\rug-window\rug-window.log`.
@@ -47,7 +47,14 @@ uv run pytest                        # tests
 uv run python tools/build_release.py # build the release zip
 ```
 
-Design notes and learning notes (Korean): `docs/explainers/rug-window.md`.
+Design notes and learning notes: `docs/explainers/rug-window.md`.
+
+## Contributing
+
+Bug reports, ideas, and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as
+described in [SECURITY.md](SECURITY.md).
 
 ## License
 

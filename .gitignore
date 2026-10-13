@@ -224,3 +224,7 @@ assets/rug/
 
 # Personal shortcuts made by tools/make_shortcut.py
 *.lnk
+
+# Local Claude Code workflow (personal learning rules, not project policy)
+CLAUDE.md
+.claude/
