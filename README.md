@@ -25,8 +25,8 @@ OpenGL) and shares no code with it.
 |---|---|
 | Drag the rug | Press the left button on the rug and move |
 | Fold it | Grab an edge or corner and pull it back over the rug |
-| Hide / show | Tray icon → 러그 숨기기 / 러그 보이기 |
-| Quit | Tray icon → 끄기 |
+| Hide / show | Tray icon → Hide rug / Show rug |
+| Quit | Tray icon → Quit |
 
 Clicks off the rug go to the desktop as usual. Only one copy runs at a time.
 Logs are written to `%LOCALAPPDATA%\rug-window\rug-window.log`.
@@ -47,7 +47,7 @@ uv run pytest                        # tests
 uv run python tools/build_release.py # build the release zip
 ```
 
-Design notes and learning notes (Korean): `docs/explainers/rug-window.md`.
+Design notes and learning notes: `docs/explainers/rug-window.md`.
 
 ## License
 

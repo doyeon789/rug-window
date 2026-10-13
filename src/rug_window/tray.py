@@ -11,9 +11,9 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from rug_window.rug_widget import RugWidget
 
 TOOLTIP = "Rug Window"
-HIDE_TEXT = "러그 숨기기"
-SHOW_TEXT = "러그 보이기"
-QUIT_TEXT = "끄기"
+HIDE_TEXT = "Hide rug"
+SHOW_TEXT = "Show rug"
+QUIT_TEXT = "Quit"
 
 
 class RugTray(QSystemTrayIcon):
