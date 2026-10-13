@@ -94,7 +94,13 @@ a quick flick, four random flicks):
 
 - `ClothSimulation.displacement_percentile(percent)`: how far particles moved
   in the last step at a percentile. The 99th percentile ignores the few
-  particles of a pile that keep jostling, which `max_displacement` did not.
+  particles of a pile that keep jostling, which the old rule (fastest
+  particle only, `max_displacement`) did not. `max_displacement` was removed
+  once nothing used it.
+- Trade-off: up to 1% of the particles (about 22, an 8 x 10 cm patch) may
+  still be moving when the rug falls asleep. A falling flap moves far faster
+  than the threshold and lands within a few frames, so in practice this is a
+  slow, nearly settled patch.
 - `rug_widget.py`: `SETTLED_DISPLACEMENT` 0.02 → 0.5 mm per frame (about 0.3
   px), measured at `SETTLED_PERCENTILE = 99`, for 30 frames. Asleep, the
   simulation does not run, so nothing can leak.
