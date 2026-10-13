@@ -29,9 +29,9 @@ def default_surface_format() -> QSurfaceFormat:
 
     OpenGL 3.3 Core for the renderer's shaders, an 8-bit alpha buffer so the
     translucent window is not black, and 2x multisampling to smooth the rug's
-    edges. Multisampled buffers cover the whole screen-sized window, so each
-    extra sample costs memory: 4x used about 200 MB more than 2x. 2x was
-    picked after comparing 0x, 2x, and 4x on screen.
+    edges. Each extra sample multiplies the memory of the screen-sized
+    buffers, so 2x is the chosen trade-off between smooth edges and memory
+    (measurements in ``docs/explainers/reduce-memory.md``).
 
     Returns:
         The format to pass to ``QSurfaceFormat.setDefaultFormat``.
