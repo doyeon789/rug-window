@@ -1,524 +1,524 @@
 # Rug Window
 
-> 상태: **구현 중**. 원작 영상을 참고해 다시 설계했다: 화면 전체가 무대이고, 위에서 내려다본 러그를 마우스로 잡아 끌고 접는다. 바탕화면 아이콘 위에서는 불룩해진다. 남은 것: 테스트 케이스(사용자 설계), 미세 조정.
+> Status: **in progress**. Redesigned after the original video: the whole screen is the stage, and you grab, drag, and fold a rug seen from straight above. It bumps up over desktop icons. Remaining: test cases (designed by the maintainer) and fine tuning.
 
-## 1. 개요
+## 1. Overview
 
-바탕화면의 지저분한 파일들을 **가상의 러그로 덮는** Windows 데스크톱 앱.
-GitHub Next의 Terkel이 만든 macOS 앱에서 아이디어를 가져왔다.
+A Windows desktop app that **covers the messy files on your desktop with a virtual rug**.
+The idea comes from a macOS app by Terkel at GitHub Next.
 
-MVP 범위: 실행하면 3D 천 러그가 바탕화면 위로 떨어져 주름지며 펼쳐지고, 마우스로 끌어 옮길 수 있다.
-파일은 실제로 옮기지 않고 **시각적으로만 덮는다**. 파일 개수에 따른 불룩함은 MVP 이후에 한다.
+MVP scope: on launch, a 3D cloth rug drops onto the desktop, wrinkles as it spreads out, and can be dragged with the mouse.
+Files are never moved; they are **only covered visually**. Bumps that depend on how many files are underneath come after the MVP.
 
-## 2. 배경 지식
+## 2. Background
 
-### 창의 Z-order (앞뒤 순서)
+### Window Z-order (front-to-back order)
 
-Windows의 모든 최상위 창은 앞뒤 순서 목록에 들어 있다.
+Every top-level window in Windows sits in one front-to-back list.
 
 ```
-[맨 앞]  다른 앱 창들 (브라우저, 에디터 ...)
-         ── 러그 창 (Progman 바로 앞에 붙어 있어야 함)
-[맨 뒤]  Progman / WorkerW  ← 바탕화면 아이콘 + 배경화면
+[front]  other app windows (browser, editor ...)
+         ── rug window (must sit right in front of Progman)
+[back]   Progman / WorkerW  ← desktop icons + wallpaper
 ```
 
-- `SetWindowPos(hwnd, insert_after, ...)`의 두 번째 인자는 "어디에 세울지"다. 특정 창의 hwnd를 넣으면 **그 창 바로 뒤**, `HWND_BOTTOM`을 넣으면 **줄 맨 뒤**.
-- ⚠ **정정**: 처음 계획은 `HWND_BOTTOM`이었지만, Progman도 최상위 창이라 러그가 바탕화면 **뒤**로 숨어버릴 수 있다(미검증). 대안: Progman 바로 앞 창(`GetWindow(progman, GW_HWNDPREV)`)의 뒤에 세운다. 구현 때 둘 다 눈으로 확인한다.
-- 사용자가 러그를 클릭하면 OS가 러그를 **활성화하면서 맨 앞으로** 끌어올린다. 대응 순서: ① `WS_EX_NOACTIVATE`로 활성화 자체를 막기 → 안 되면 ② `WM_WINDOWPOSCHANGING`을 가로채 위치를 바꿔치기 → 최후 수단 ③ 클릭 후 다시 내려보내기(깜빡임).
-- `WorkerW`에 자식 창으로 붙이는 방식(라이브 배경화면 앱들이 쓰는 방식)은 아이콘 **뒤**로 들어가서 아이콘을 덮을 수 없다.
+- The second argument of `SetWindowPos(hwnd, insert_after, ...)` is "where to stand". Pass a window's hwnd to stand **right behind that window**; pass `HWND_BOTTOM` to stand **at the very back**.
+- ⚠ **Correction**: the first plan used `HWND_BOTTOM`, but Progman is also a top-level window, so the rug could hide **behind** the desktop (unverified). Alternative: stand behind the window right in front of Progman (`GetWindow(progman, GW_HWNDPREV)`). Check both by eye during implementation.
+- When the user clicks the rug, the OS **activates it and pulls it to the front**. Plan of defence: ① block activation itself with `WS_EX_NOACTIVATE` → if that fails, ② intercept `WM_WINDOWPOSCHANGING` and swap the position → last resort ③ push it back down after the click (flickers).
+- Attaching as a child of `WorkerW` (what live-wallpaper apps do) puts the window **behind** the icons, so it cannot cover them.
 
-### 창 스타일과 Qt 옵션
+### Window styles and Qt options
 
-창 스타일은 **비트 스위치 묶음**이다. 하나만 켤 때는 반드시 읽고 → OR로 더하고 → 쓴다.
+A window style is a **bundle of bit switches**. To turn one on, always read → OR it in → write.
 
 ```python
 style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
 win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_NOACTIVATE)
 ```
 
-Qt 옵션으로 되는 건 Qt로 하고, `desktop.py`에는 Qt가 못 하는 것만 남긴다.
+Whatever Qt options can do is done with Qt; `desktop.py` keeps only what Qt cannot do.
 
-| 필요한 것 | 방법 |
+| Need | How |
 |---|---|
-| 테두리 없애기 | `Qt.FramelessWindowHint` |
-| 작업표시줄에서 숨기기 | `Qt.Tool` (`WS_EX_TOOLWINDOW`를 켬) |
-| Progman 바로 앞에 세우기 | `desktop.py` (Win32 직접) |
-| 클릭해도 앞으로 안 나오기 | `desktop.py`의 `WS_EX_NOACTIVATE` 또는 Qt 옵션 (검증 필요) |
+| No frame | `Qt.FramelessWindowHint` |
+| Hide from the taskbar | `Qt.Tool` (turns on `WS_EX_TOOLWINDOW`) |
+| Stand right in front of Progman | `desktop.py` (Win32 directly) |
+| Do not come to the front on click | `WS_EX_NOACTIVATE` in `desktop.py`, or a Qt option (to verify) |
 
-### 투명 창
+### Transparent windows
 
-Qt에서 `FramelessWindowHint`로 테두리를 없애고 `WA_TranslucentBackground`를 켜면 픽셀마다 알파값을 가진 창이 된다.
-러그가 그려지지 않은 부분은 알파 0이라서 뒤에 있는 바탕화면이 보인다.
+In Qt, removing the frame with `FramelessWindowHint` and turning on `WA_TranslucentBackground` gives a window with per-pixel alpha.
+Wherever the rug is not drawn, alpha is 0, so the desktop behind shows through.
 
-### Verlet 적분으로 천 만들기
+### Building cloth with Verlet integration
 
-천을 격자 모양의 **입자**와, 입자 쌍 사이 거리를 유지하려는 **제약(막대)**으로 나타낸다.
+The cloth is a grid of **particles** plus **constraints (sticks)** that try to keep pairs of particles at a fixed distance.
 
-매 프레임 순서:
-1. **적분**: `새 위치 = 현재 + (현재 - 이전) * 감쇠 + 가속도 * dt²`
-   - 속도를 따로 저장하지 않고 "이전 위치와의 차이"를 속도로 쓴다. 그래서 위치를 강제로 고쳐도(충돌, 제약) 속도가 자연스럽게 따라온다.
-2. **제약 풀기**: 각 막대마다 현재 길이와 원래 길이의 차이를 구해, 양 끝 입자를 절반씩 당기거나 민다. 이걸 여러 번(예: 8회) 반복하면 전체가 수렴한다.
-3. **충돌**: 바닥(z=0) 아래로 내려간 입자는 바닥 위로 올린다.
+Every frame:
+1. **Integrate**: `new position = current + (current - previous) * damping + acceleration * dt²`
+   - Velocity is not stored; the "difference from the previous position" is the velocity. So when a position is forced (collision, constraint), the velocity follows naturally.
+2. **Solve constraints**: for each stick, find the difference between its current and rest length and pull or push both ends by half. Repeating this several times (e.g. 8) makes the whole cloth converge.
+3. **Collide**: particles below the floor (z=0) are lifted back onto it.
 
-막대 종류:
+Stick types:
 
-| 종류 | 연결 | 역할 |
+| Type | Connects | Role |
 |---|---|---|
-| 구조 | 가로·세로 이웃 | 천이 늘어나지 않게 |
-| 전단 | 대각선 이웃 | 평행사변형으로 찌그러지지 않게 |
-| 굽힘 | 두 칸 건너 | 접힘에 저항 → 주름 크기 결정 |
+| Structural | horizontal and vertical neighbours | keeps the cloth from stretching |
+| Shear | diagonal neighbours | keeps squares from squashing into parallelograms |
+| Bending | two cells apart | resists folding → sets wrinkle size |
 
-### 법선과 Lambert 조명
+### Normals and Lambert lighting
 
-입자 격자를 삼각형으로 나누고, 각 꼭짓점의 **법선**(표면이 향하는 방향)을 주변 면들의 평균으로 구한다.
-밝기 = `max(0, 법선 · 빛 방향)`. 주름진 곳은 법선이 기울어져 어둡게 보인다. 천의 입체감은 전부 이 음영에서 나온다.
+The particle grid is split into triangles, and each vertex's **normal** (the direction the surface faces) is the average of the faces around it.
+Brightness = `max(0, normal · light direction)`. Wrinkles tilt the normals and look darker. All of the cloth's depth comes from this shading.
 
-## 3. 구조
+## 3. Structure
 
-### 파일별 역할
+### Files
 
-**앱 코드 (`src/rug_window/`)**: 데이터가 흐르는 순서대로
+**App code (`src/rug_window/`)**, in data-flow order
 
-| 파일 | 한 줄 역할 | 비유 | 알고 있는 세계 |
+| File | One-line role | Analogy | Knows about |
 |---|---|---|---|
-| `__main__.py` | 앱을 조립하고 이벤트 루프를 돌린다 | 미술실 문 열기 | Qt (조립만) |
-| `rug_widget.py` | 모든 걸 연결하는 중심: 타이머로 천을 움직이고 다시 그리고, 드래그를 받는다 | 화가 | Qt |
-| `desktop.py` | Qt가 못 하는 Win32 일: Progman 바로 앞에 세우기, 클릭해도 앞으로 안 나오기 | 줄 서기 담당 | Win32 (hwnd만) |
-| `cloth.py` | 구슬과 막대로 천의 움직임을 계산한다 | 계산 노트 | numpy만 |
-| `renderer.py` | 구슬 위치를 받아 음영 있는 천으로 그린다 | 물감과 붓 | OpenGL |
+| `__main__.py` | Assembles the app and runs the event loop | Unlocking the art room | Qt (assembly only) |
+| `rug_widget.py` | The hub: moves the cloth on a timer, repaints, takes drags | The painter | Qt |
+| `desktop.py` | Win32 work Qt cannot do: stand right in front of Progman, do not come forward on click | The line monitor | Win32 (hwnd only) |
+| `cloth.py` | Computes the cloth's motion with beads and sticks | The calculation notebook | numpy only |
+| `renderer.py` | Turns bead positions into shaded cloth | Paint and brush | OpenGL |
 
-데이터 흐름: `QTimer(16ms)` → `ClothSimulation.step()` → `positions` 배열 → `update()` → `paintGL` → `ClothRenderer.draw()` → 화면
+Data flow: `QTimer(16ms)` → `ClothSimulation.step()` → `positions` array → `update()` → `paintGL` → `ClothRenderer.draw()` → screen
 
-**프로젝트 설정**
+**Project settings**
 
-| 파일 | 역할 |
+| File | Role |
 |---|---|
-| `pyproject.toml` | 프로젝트 정보, 의존성 허용 범위, ruff/pytest 설정 |
-| `uv.lock` | 실제 설치된 정확한 버전 (uv가 자동 관리, 커밋 필수) |
-| `.gitattributes` | 텍스트 파일 줄바꿈을 LF로 통일 |
-| `.gitignore` | `.venv/`, `__pycache__/` 등 커밋 제외 |
+| `pyproject.toml` | Project info, allowed dependency ranges, ruff/pytest settings |
+| `uv.lock` | The exact installed versions (managed by uv, must be committed) |
+| `.gitattributes` | Normalises text-file line endings to LF |
+| `.gitignore` | Keeps `.venv/`, `__pycache__/`, etc. out of commits |
 
-**Claude 협업 규칙**
+**Claude collaboration rules** (local only, not tracked in git)
 
-| 파일 | 역할 |
+| File | Role |
 |---|---|
-| `CLAUDE.md` | Claude가 지킬 코드·네이밍·커밋·워크플로우 규칙 |
-| `.claude/settings.json` | Plan 모드 기본값, `gh pr merge` 차단 |
-| `docs/explainers/rug-window.md` | 이 문서: 계획, 배경 지식, 설계 결정, 학습 노트 |
+| `CLAUDE.md` | Code, naming, commit, and workflow rules Claude follows |
+| `.claude/settings.json` | Plan mode by default, blocks `gh pr merge` |
+| `docs/explainers/rug-window.md` | This document: plan, background, design decisions, learning notes |
 
-## 4. 설계 결정
+## 4. Design decisions
 
-| 선택 | 버린 대안 | 이유 |
+| Choice | Rejected alternatives | Why |
 |---|---|---|
-| PySide6 | PyQt6, pyglet, tkinter | 투명 창, OpenGL, 트레이를 모두 지원하고 LGPL |
-| `pyside6-essentials`만 의존 | `pyside6` 전체 | 쓰는 모듈(QtGui, QtWidgets, QtOpenGL, QtOpenGLWidgets)이 전부 essentials에 있음. `.venv` 769MB → 327MB |
-| QOpenGLWidget + PyOpenGL | moderngl, Qt3D | 레이어가 가장 적고 자료가 많음 |
-| numpy로 직접 Verlet 구현 | PyBullet, Taichi | 가볍고, 원리를 직접 이해할 수 있음 |
-| Progman 바로 앞에 세우기 | WorkerW 부착, HWND_BOTTOM | WorkerW는 아이콘 뒤. HWND_BOTTOM은 Progman보다 뒤로 갈 수 있음 (검증 예정) |
-| 함수명 `place_above_desktop` | `place_behind`, `pin_to_desktop_layer` | 호출하는 줄만 봐도 *왜* 부르는지 보임 |
-| 작업표시줄 숨김은 `Qt.Tool` | `desktop.py`에서 직접 스타일 수정 | 더 간단하고, 스타일 덮어쓰기 실수 위험이 없음. 창 성질은 창을 만드는 쪽이 정함 |
-| `positions`는 읽기 전용 뷰 | 내부 배열 그대로, 복사본 | 매 프레임(60fps) 읽어도 복사가 없음. 바깥에서 실수로 쓰면 에러가 나서 시뮬레이션이 몰래 망가지지 않음 |
-| 잘못된 입력은 `ValueError` | 검증 없이 문서로만 | `rows`/`cols` < 3이면 굽힘 제약(2칸 이웃)을 못 만들고, `spacing` ≤ 0이면 천이 성립하지 않음. 이상하게 동작하기보다 바로 멈추는 게 원인 찾기 쉬움 |
-| Progman 없음 → `OSError`, 앞 창 없음 → `HWND_TOP` | 둘 다 조용히 무시 | 바탕화면을 못 찾는 건 진짜 고장이라 알려야 함. 앞 창이 없으면 맨 앞이 곧 Progman 바로 앞 |
-| Win32 함수는 창을 띄운 **뒤** 호출 | `__init__`에서 호출 | 진짜 창(hwnd)은 show 이후에 생기고, Qt가 show 중에 스타일을 다시 덮어쓸 수 있음 |
-| Win32 헬퍼 호출은 `main()`이 맡음 | `RugWidget` 안에서 (`showEvent`) | 위젯은 Win32를 모르게 두고, "show 다음에 부른다"는 순서를 조립하는 곳 한 군데에서 보이게 |
-| 예외는 `OSError`로 통일 | `pywintypes.error` 그대로 | pywin32 에러는 `OSError`가 아니다(확인함). `FindWindow`는 실패해도 0을 돌려줄 뿐이라 직접 확인해서 올린다 |
-| Progman 앞으로 걸어가며 topmost 창 건너뛰기 | 바로 앞 창 뒤에 세우기 | 바로 앞이 topmost 창(작업표시줄 등)이면 그 뒤에 선 러그도 topmost가 되어 모든 앱 위로 뜬다 (미검증). 없으면 `HWND_NOTOPMOST` |
-| 왼쪽 버튼으로만 드래그, `mouseReleaseEvent` 없음 | release 핸들러로 드래그 종료 | move 이벤트는 버튼을 누를 때만 온다. 대신 오른쪽 버튼으로 끌리는 걸 막는다 |
-| 렌더러는 device pixel, 변환은 위젯에서 | 각자 알아서 | HiDPI에서 logical × `devicePixelRatio()` = device. 변환을 한 곳에서만 |
-| ruff `"D"` 규칙 켬 | 설정만 두기 | `pydocstyle` 설정은 `"D"`가 `select`에 없으면 아무 일도 안 한다 |
-| 인덱스는 `__init__`에서 한 번, 위치·법선만 매 프레임 업로드 | 매 프레임 전부 업로드 | 격자 모양(어느 구슬끼리 잇는지)은 안 바뀐다 |
-| ~~빛을 비스듬히 (`LIGHT_DIRECTION`)~~ → 화면 중앙 위 전등 (`LIGHT_HEIGHT` 4 m) | 먼 곳의 한 방향 빛 | 사용자 요청. 접힌 면이 전등을 향하는 정도로 밝기가 달라진다 |
-| `ClothRenderer.release()` + 닫힐 때 위젯이 호출 | 가비지 컬렉션에 맡기기 | GPU 객체는 Python이 지워도 반납되지 않고, 컨텍스트가 활성일 때만 반납 가능 |
-| `draw()` 입력 검증 (`ValueError`) | 검증 없이 업로드 | 모양·타입이 틀려도 GPU는 불평 없이 엉뚱하게 그린다 |
-| 텍스처만 빌리기 (B) | 모델 그대로(A), 모델을 천으로(C), 뼈대+피부(D) | 받은 모델은 33만 점, 두 겹, 주름이 조각된 채 굳은 모양 → A는 안 움직이고, C는 느리고 원래 주름으로 돌아가려 하고, D는 주름이 두 번 겹친다. 만족스럽지 않으면 A·C도 시험 |
-| ambientCG의 CC0 원본 텍스처 사용 | CGTrader 파일 | CGTrader 약관(21A.1, 21A.6)은 받은 그대로 재배포 금지. 같은 텍스처의 CC0 원본을 직접 받았다. `assets/rug/`는 `.gitignore` |
-| 텍스처를 패키지 안(`src/rug_window/assets/`)에 | 저장소 루트 `assets/` | 설치할 때 `src/` 밖 파일은 빠진다 |
-| `load_texture`는 `QImage` 반환 | `QPixmap` | `QPixmap`은 앱 객체가 있어야 만들 수 있어 테스트가 번거롭다. `QBrush`는 둘 다 받는다 |
-| 자리표시: 작은 체크 반복(1/4 크기) + 둥근 모서리 + 남색 테두리 | 모델처럼 한 장을 펼친 큰 체크, 각진 모서리 | 둘 다 만들어 보고 사용자가 골랐다. 큰 체크는 주름·그림자 없이 평평하면 밋밋했다 |
-| 두께: 물리는 한 겹, 그리기는 두 겹(Solidify) | 두 겹을 물리로 계산 | 렌더러가 구슬을 법선 방향으로 ±두께/2 밀어 윗면·아랫면을 만들고 가장자리를 띠로 잇는다. 비용은 가장자리 칸만큼. 두 겹이 따로 노는 문제가 없다 (4단계) |
-| 막대 묶음을 홀짝으로 나눠 한 번에 계산 | 막대 하나씩 for문 | numpy는 묶음 계산이 수백 배 빠르다. 같은 묶음 안에서 구슬이 겹치지 않아야 덮어쓰지 않는다 → (1-2, 3-4) 먼저, (2-3, 4-5) 나중 |
-| 바닥 마찰 = 이번 스텝의 가로 이동을 취소(grip, `FLOOR_FRICTION = 1.0`) | 속도만 줄이기 | 속도만 줄이면 막대 맞추기 단계에서 바닥 구슬이 얼음처럼 미끄러져 주름이 펴진다 |
-| 기울여서 떨어뜨리기 (`DROP_TILT = 0.4`) | 수평 | 수평으로 떨어진 천은 수평으로 앉는다. 한쪽이 먼저 닿아 붙잡혀야 나머지가 밀려 주름이 생긴다 |
-| `tilt`, `floor_friction`을 생성자 인자로 | 상수만 | 미리보기 도구에서 비교·조정하기 위해. 기본값은 상수 |
-| 테스트하기 쉬운 모듈 함수 `verlet_step`, `relax_pairs`, `structural_pairs` | 전부 클래스 안에 | 학습 노트의 숫자 예제를 그대로 테스트로 쓸 수 있다 |
-| 카메라를 바로 위에서 (정사영, 1 m = 450 px) | 30° 기울기 | 원작 영상이 위에서 본다. 마우스 위치를 세계 좌표로 바꾸기도 단순해진다 |
-| 화면 전체 투명 창 + 클릭 통과를 매 프레임 켜고 끄기 (`WS_EX_TRANSPARENT`) | 작은 창 + 창 끌기 | 러그가 바탕화면 어디든 다닌다. 투명 픽셀의 자동 통과에 기대지 않아 확실하다 |
-| 그림자 없음 | 아래로 비킨 그림자, 전등에서 투영한 그림자 | 두 가지를 만들어 봤지만 사용자가 빼기로 했다 |
-| 바닥 마찰 → 막대 맞추기 순서 + 잡은 점에서 끈 묶기(tether) | 막대 → 마찰, 반복 늘리기 | 늘어남이 11.6배 → 1.07배. 막대가 마지막 말을 해야 한다 |
-| 잡은 점이 마우스를 25%씩 따라감 (`GRAB_FOLLOW`) | 바로 붙음 | 한 박자 늦게 따라와야 무게감이 난다 (사용자 확인) |
-| 자기 충돌: 한 번 찾고(KD-트리, scipy) 매 반복 밀어내기, 높이는 0.7배로 재기 | 매번 찾기, 3D 그대로 | 매번 찾으면 27~64 ms. 높이를 덜 쳐야 아래층 구슬 사이 틈으로 빠지지 않는다. 눈에 보이게 뚫린 쌍 719 → 0 |
-| 막대 묶음을 격자 슬라이스로 | 번호 목록(fancy indexing) | 같은 쌍인데 복사가 없어 2배 빠르다 |
-| 그릴 때만 3배 촘촘하게 (Catmull-Rom 행렬) | 3D 모델, scipy `zoom` | 모델은 매끈함만 주고 충돌·상호작용은 못 푼다. 행렬은 0.25 ms (zoom 15.5 ms) |
-| 가만히 있으면 계산 쉬기 | 항상 60 fps | 큰 투명 창을 매 프레임 합성하면 CPU를 많이 쓴다 |
+| PySide6 | PyQt6, pyglet, tkinter | Supports transparent windows, OpenGL, and the tray, and is LGPL |
+| Depend on `pyside6-essentials` only | full `pyside6` | Every module used (QtGui, QtWidgets, QtOpenGL, QtOpenGLWidgets) is in essentials. `.venv` 769 MB → 327 MB |
+| QOpenGLWidget + PyOpenGL | moderngl, Qt3D | Fewest layers, most documentation |
+| Hand-written Verlet in numpy | PyBullet, Taichi | Light, and the principle can be understood directly |
+| Stand right in front of Progman | attach to WorkerW, HWND_BOTTOM | WorkerW is behind the icons. HWND_BOTTOM may go behind Progman (to verify) |
+| Function name `place_above_desktop` | `place_behind`, `pin_to_desktop_layer` | The calling line alone shows *why* it is called |
+| Hide from the taskbar with `Qt.Tool` | edit the style in `desktop.py` | Simpler, and no risk of overwriting styles. The code that creates the window decides its nature |
+| `positions` is a read-only view | the internal array, a copy | No copy even when read every frame (60 fps). An accidental write from outside raises instead of silently breaking the simulation |
+| Bad input raises `ValueError` | documentation only | With `rows`/`cols` < 3 the bending sticks (two cells apart) cannot exist, and `spacing` ≤ 0 is not a cloth. Stopping at once is easier to debug than odd behaviour |
+| No Progman → `OSError`; no window in front → `HWND_TOP` | silently ignore both | Not finding the desktop is a real failure and must be reported. With nothing in front, the very front *is* right in front of Progman |
+| Call Win32 functions **after** the window is shown | in `__init__` | The real window (hwnd) exists only after show, and Qt may rewrite styles during show |
+| `main()` calls the Win32 helpers | inside `RugWidget` (`showEvent`) | Keeps the widget unaware of Win32, and makes the "call after show" order visible in the one place that assembles the app |
+| Wrap errors as `OSError` | raw `pywintypes.error` | pywin32 errors are not `OSError` (verified). `FindWindow` just returns 0 on failure, so it is checked and raised by hand |
+| Walk forward from Progman, skipping topmost windows | stand behind the window right in front | If the window in front is topmost (e.g. the taskbar), a rug behind it also becomes topmost and floats over every app (unverified). Without one, `HWND_NOTOPMOST` |
+| Drag with the left button only, no `mouseReleaseEvent` | end the drag in a release handler | Move events only arrive while a button is held. Instead, block dragging with the right button |
+| Renderer in device pixels, conversion in the widget | each converts on its own | On HiDPI, logical × `devicePixelRatio()` = device. Convert in one place only |
+| Turn on ruff `"D"` rules | only keep the settings | `pydocstyle` settings do nothing unless `"D"` is in `select` |
+| Indices uploaded once in `__init__`, only positions and normals each frame | upload everything every frame | The grid shape (which beads connect) never changes |
+| ~~Slanted light (`LIGHT_DIRECTION`)~~ → a lamp above the screen centre (`LIGHT_HEIGHT` 4 m) | one distant directional light | Maintainer's request. Folded faces get brighter or darker by how much they face the lamp |
+| `ClothRenderer.release()`, called by the widget on close | leave it to garbage collection | GPU objects are not returned when Python deletes the wrapper, and can only be returned while the context is current |
+| Validate `draw()` input (`ValueError`) | upload without checks | With a wrong shape or type the GPU draws garbage without complaint |
+| Borrow only the texture (B) | use the model as is (A), turn the model into cloth (C), skeleton + skin (D) | The model has 330k points, two layers, and sculpted, frozen wrinkles → A cannot move, C is slow and springs back to the old wrinkles, D doubles the wrinkles. If unsatisfying, try A and C too |
+| Use the CC0 original texture from ambientCG | the CGTrader file | CGTrader's terms (21A.1, 21A.6) forbid redistributing files as downloaded. The same texture's CC0 original was downloaded directly. `assets/rug/` is in `.gitignore` |
+| Texture inside the package (`src/rug_window/assets/`) | repo-root `assets/` | Files outside `src/` are left out on install |
+| `load_texture` returns `QImage` | `QPixmap` | `QPixmap` needs an application object, which makes tests awkward. `QBrush` accepts both |
+| Placeholder: small repeated check (1/4 size) + rounded corners + navy border | one big check spread like the model, square corners | Both were built and the maintainer chose. The big check looked plain when flat, without wrinkles or shadows |
+| Thickness: one layer in physics, two when drawing (Solidify) | simulate two layers | The renderer pushes beads ±thickness/2 along the normal to make top and bottom faces and joins the edges with a band. Costs only the edge cells. No problem of two layers drifting apart (step 4) |
+| Split sticks into odd/even batches computed at once | one stick at a time in a for loop | numpy batch work is hundreds of times faster. Beads must not repeat within a batch or writes overwrite each other → (1-2, 3-4) first, (2-3, 4-5) after |
+| Floor friction = cancel this step's sideways move (grip, `FLOOR_FRICTION = 1.0`) | only slow the velocity | With only slowing, the stick solver slides floor beads like ice and the wrinkles flatten |
+| Drop at a tilt (`DROP_TILT = 0.4`) | level | Cloth dropped level lands level. One side must touch first and be held so the rest is pushed into wrinkles |
+| `tilt` and `floor_friction` as constructor arguments | constants only | To compare and tune in the preview tool. Defaults are the constants |
+| Easy-to-test module functions `verlet_step`, `relax_pairs`, `structural_pairs` | everything inside the class | The number examples in the learning notes can be used as tests directly |
+| Camera straight above (orthographic, 1 m = 450 px) | 30° tilt | The original video looks from above. Converting the mouse position to world coordinates also becomes simple |
+| Full-screen transparent window + click-through toggled every frame (`WS_EX_TRANSPARENT`) | small window + window dragging | The rug can go anywhere on the desktop. Does not rely on transparent pixels passing clicks automatically, so it is reliable |
+| No shadow | offset shadow, shadow projected from a lamp | Both were built, but the maintainer chose to drop them (later brought back; see below) |
+| Floor friction → stick solving order + tether from the grabbed point | sticks → friction, more iterations | Stretch 11.6× → 1.07×. The sticks must have the last word |
+| The grabbed point follows the mouse 25% per frame (`GRAB_FOLLOW`) | snap to it | Lagging a beat behind gives a sense of weight (maintainer confirmed) |
+| Self-collision: find pairs once (KD-tree, scipy), push apart every iteration, measure height at 0.7× | search every time, plain 3D | Searching every time costs 27–64 ms. Discounting height keeps beads from slipping through the gaps of the layer below. Visibly piercing pairs 719 → 0 |
+| Stick batches as grid slices | index lists (fancy indexing) | Same pairs, but no copies: 2× faster |
+| 3× denser only when drawing (Catmull-Rom matrices) | 3D model, scipy `zoom` | A model only adds smoothness and cannot handle collision or interaction. Matrices take 0.25 ms (`zoom` 15.5 ms) |
+| Pause the simulation when nothing moves | always 60 fps | Compositing a large transparent window every frame uses a lot of CPU |
 
-## 5. 주의할 점 / 열린 질문
+## 5. Caveats / open questions
 
-- [x] QOpenGLWidget + 투명 배경이 Windows에서 제대로 합성되는지 → **된다** (2단계, 사용자 확인. `QPainter` 자리표시 기준이며, 셰이더 렌더링은 4단계에서 다시 본다)
-- [ ] 다른 창을 모두 최소화했을 때 Progman 앞이 topmost 창이 되는지, topmost 건너뛰기가 러그를 앱 위로 띄우지 않는지 (PR #6 리뷰, 미검증)
-- [ ] Qt `resizeGL`이 정말 logical pixel을 주는지 (미검증)
-- [x] Progman 바로 앞에 세우는 방식 → **동작** (2단계: Win32로 읽어 보니 러그와 Progman 사이 창 0개). `HWND_BOTTOM` 자체는 시험하지 않았다
-- [ ] (이 PC에서는 아이콘이 Progman 밑에 있음을 확인. 다른 환경은 미검증) 배경화면 슬라이드쇼 등 일부 상태에서는 아이콘(`SHELLDLL_DefView`)이 Progman이 아닌 `WorkerW` 밑에 있을 수 있음. 그러면 "Progman 바로 앞"이 아이콘 뒤가 될 수도 있음 (리뷰어 지적, 미검증)
-- [ ] `GRAVITY = -9.8`은 1 러그 단위 = 1m 가정. 화면에서 떨어지는 속도가 어색하면 조정 (미검증)
-- [x] `WS_EX_NOACTIVATE`가 켜지고 드래그와 함께 동작하는지 → **된다** (2단계: 스타일 확인 + 사용자 확인)
-- [x] Qt가 투명 창에 켜는 확장 스타일 → **`WS_EX_LAYERED`** (2단계, 출력으로 확인). 그래서 `disable_activation`은 읽고 → OR → 쓰기를 지켜야 한다
-- [ ] 창의 투명한 여백이 클릭을 통과시키는지 (막으면 러그 근처 아이콘이 클릭되지 않음, 미검증)
-- [ ] Win+D(바탕화면 보기)를 누르면 러그도 숨겨질 가능성이 큼 (MVP에서는 허용)
-- [x] numpy 성능 → 40×25 격자 한 스텝 **약 4.5 ms** (예산 16.7 ms, 3단계 측정)
-- [ ] 카메라를 얼마나 기울여야 두께(옆면)가 자연스럽게 보이는지. 바로 위에서 보면 옆면이 안 보인다 (4단계에서 눈으로 결정)
-- [ ] `RUG_THICKNESS`와 굽힘 막대 강도: 두꺼운 러그답게 크고 둥근 주름이 나오는 값 (3단계)
+- [x] Does QOpenGLWidget + transparent background composite correctly on Windows? → **yes** (step 2, maintainer confirmed. Checked with the `QPainter` placeholder; shader rendering to be checked again in step 4)
+- [ ] With every other window minimised, does the window in front of Progman become topmost, and does skipping topmost windows keep the rug from floating over apps? (PR #6 review, unverified)
+- [ ] Does Qt's `resizeGL` really give logical pixels? (unverified)
+- [x] Standing right in front of Progman → **works** (step 2: read via Win32, 0 windows between the rug and Progman). `HWND_BOTTOM` itself was not tried
+- [ ] (On this PC the icons are under Progman. Other setups unverified.) In some states, such as a wallpaper slideshow, the icons (`SHELLDLL_DefView`) may live under `WorkerW` instead of Progman. Then "right in front of Progman" may be behind the icons (reviewer's note, unverified)
+- [ ] `GRAVITY = -9.8` assumes 1 rug unit = 1 m. Adjust if the fall looks odd on screen (unverified)
+- [x] Is `WS_EX_NOACTIVATE` set, and does it work together with dragging? → **yes** (step 2: style checked + maintainer confirmed)
+- [x] Extended style Qt sets on a transparent window → **`WS_EX_LAYERED`** (step 2, confirmed from output). So `disable_activation` must keep read → OR → write
+- [ ] Do clicks pass through the window's transparent margin? (If not, icons near the rug cannot be clicked; unverified)
+- [ ] Win+D (show desktop) will likely hide the rug too (accepted for the MVP)
+- [x] numpy performance → one step of a 40×25 grid takes **about 4.5 ms** (budget 16.7 ms, measured in step 3)
+- [ ] How far to tilt the camera so the thickness (side faces) looks natural. Seen straight from above, the sides are invisible (decide by eye in step 4)
+- [ ] `RUG_THICKNESS` and bending stiffness: values that give the big, round folds of a thick rug (step 3)
 
-## 6. 학습 노트
+## 6. Learning notes
 
-### 스켈레톤 복습 (2026-10-12)
+### Skeleton review (2026-10-12)
 
-**실행 흐름**
-- `python -m rug_window` → 패키지의 `__main__.py`를 직접 실행 → `__name__ == "__main__"`
-- `rug-window` 명령 (`[project.scripts]`) → `from rug_window.__main__ import main` 후 `sys.exit(main())` → import이므로 `if __name__ == "__main__":` 블록은 **실행되지 않음**
-- 결론: 시작 로직은 전부 `main()` 안에 둔다. `if` 블록에 넣으면 `rug-window` 명령에서 빠진다.
+**How it starts**
+- `python -m rug_window` → runs the package's `__main__.py` directly → `__name__ == "__main__"`
+- The `rug-window` command (`[project.scripts]`) → `from rug_window.__main__ import main`, then `sys.exit(main())` → this is an import, so the `if __name__ == "__main__":` block **does not run**
+- Conclusion: all startup logic lives in `main()`. Anything in the `if` block is skipped by the `rug-window` command.
 
 **`pyproject.toml` vs `uv.lock`**
 
-| 파일 | 내용 | 관리 |
+| File | Contents | Managed by |
 |---|---|---|
-| `pyproject.toml` | 허용 범위 (`numpy>=2.0`) | 사람 |
-| `uv.lock` | 실제 설치된 정확한 버전 (`numpy==2.5.4`) | uv 자동 |
+| `pyproject.toml` | Allowed ranges (`numpy>=2.0`) | People |
+| `uv.lock` | The exact installed versions (`numpy==2.5.4`) | uv, automatically |
 
-- lock 파일을 커밋하지 않으면 다른 PC에 다른 버전이 깔려 "내 PC에선 되는데" 버그가 생긴다 → 앱 프로젝트는 lock을 커밋한다.
-- `dependencies`는 실행에 필요, `dev` 그룹은 개발에만 필요.
-- `# noqa: N802`: ruff의 `N`(네이밍) 규칙 중 하나를 그 줄에서만 끔. Qt 메서드명은 Qt가 정한 것이라 바꿀 수 없다.
+- Without a committed lock file another PC installs other versions, and "works on my machine" bugs appear → app projects commit the lock.
+- `dependencies` are needed to run; the `dev` group only for development.
+- `# noqa: N802`: turns off one of ruff's `N` (naming) rules on that line only. Qt method names are set by Qt and cannot change.
 
-**`src/` 구조**
-- 모듈 = `.py` 파일, 패키지 = 모듈을 담은 폴더, `__init__.py` = 패키지 표시
-- flat 구조는 테스트가 설치본 대신 옆 폴더를 import해서 패키징 오류를 놓칠 수 있다.
-- `src/` 구조는 반드시 설치본을 거친다. `uv sync`의 editable 설치는 `.venv/Lib/site-packages/_editable_impl_rug_window.pth`에 `src/` 경로를 적어 링크만 건다 → 코드 수정이 바로 반영된다.
+**The `src/` layout**
+- Module = a `.py` file, package = a folder of modules, `__init__.py` = marks a package
+- In a flat layout, tests may import the neighbouring folder instead of the installed copy and miss packaging errors.
+- The `src/` layout always goes through the installed copy. `uv sync`'s editable install just writes the `src/` path into `.venv/Lib/site-packages/_editable_impl_rug_window.pth` → code edits apply immediately.
 
-**뼈대의 구성 요소**
-- 타입 힌트: 실행 중 검사하지 않는 **표시**. 사람·에디터·mypy를 위한 것.
-- docstring: 실행 중에도 남는 설명 (`help()`, 에디터 툴팁). 구현 전에 의미를 확정한다 (예: `spacing` = 막대 제약의 "쉬는 거리").
-- `raise NotImplementedError` vs `pass`: `pass`는 `None`을 돌려줘서 엉뚱한 곳에서 터지고, `NotImplementedError`는 비어 있는 그 자리에서 바로 멈춘다.
+**Parts of a skeleton**
+- Type hints: **labels** not checked at run time. For people, editors, and mypy.
+- Docstrings: descriptions that stay at run time (`help()`, editor tooltips). Fix the meaning before implementing (e.g. `spacing` = the stick constraint's "rest distance").
+- `raise NotImplementedError` vs `pass`: `pass` returns `None` and blows up somewhere unrelated; `NotImplementedError` stops right at the empty spot.
 
-**울타리 기둥 오류 (fencepost error)** ← 3단계 테스트 후보
-- 입자 n개 사이 간격은 n−1개.
-- `ClothSimulation(rows=40, cols=30, spacing=0.1, ...)` → 입자 1200개, 가로(x) = 29 × 0.1 = **2.9**, 세로(y) = 39 × 0.1 = **3.9** (3.0 / 4.0 아님)
+**Fencepost error** ← step 3 test candidate
+- n particles have n−1 gaps.
+- `ClothSimulation(rows=40, cols=30, spacing=0.1, ...)` → 1200 particles, width (x) = 29 × 0.1 = **2.9**, height (y) = 39 × 0.1 = **3.9** (not 3.0 / 4.0)
 
-### 데스크톱 창 기초 (2026-10-12)
+### Desktop window basics (2026-10-12)
 
-**hwnd와 관심사의 분리**
-- 창은 OS가 관리하는 데이터이고, hwnd는 그걸 가리키는 숫자(핸들)다. 값 자체에는 의미가 없고 OS에 넘겨주기만 한다.
-- Win32 API는 Qt 위젯을 모르고 hwnd만 안다. 변환(`int(widget.winId())`)은 Qt 쪽에서 한 번만 한다.
-- `desktop.py`는 hwnd만 받으므로 Qt를 몰라도 된다 → Qt를 tkinter로 바꿔도 `rug_widget.py`만 고치면 된다.
+**hwnd and separation of concerns**
+- A window is data managed by the OS, and an hwnd is a number (handle) pointing to it. The value means nothing by itself; you only hand it back to the OS.
+- Win32 APIs know nothing about Qt widgets, only hwnds. The conversion (`int(widget.winId())`) happens once, on the Qt side.
+- `desktop.py` takes only hwnds, so it does not need Qt → replacing Qt with tkinter would only touch `rug_widget.py`.
 
-**스타일 = 비트 스위치**
-- `|`(OR)로 켜고 `& ~`로 끈다.
-- `SetWindowLong`은 통째로 덮어쓴다. 읽지 않고 `WS_EX_TOOLWINDOW`만 넣으면 다른 스위치(예: Qt가 투명 창에 켜둔 것)가 전부 꺼진다.
+**Styles = bit switches**
+- Turn on with `|` (OR), off with `& ~`.
+- `SetWindowLong` overwrites everything. Writing just `WS_EX_TOOLWINDOW` without reading first turns off every other switch (e.g. the ones Qt set for the transparent window).
 
 **Z-order**
-- 최상위 창은 앞뒤 한 줄로 서 있다. 클릭하면 활성화되며 맨 앞으로 끌려나온다 → 러그가 다른 창을 가린다.
-- `SetWindowPos`의 마지막 인자도 비트 OR: `SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE`.
+- Top-level windows stand in one front-to-back line. A click activates a window and pulls it to the front → the rug would cover other windows.
+- The last argument of `SetWindowPos` is also a bitwise OR: `SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE`.
 
-**설계 변경**
-- `hide_from_taskbar()`는 지우고 `Qt.Tool`을 쓴다 (더 간단하고 덮어쓰기 위험 없음).
+**Design change**
+- Drop `hide_from_taskbar()` and use `Qt.Tool` (simpler, no overwrite risk).
 
-### `__main__.py` / `rug_widget.py` 리뷰 (2026-10-12)
+### `__main__.py` / `rug_widget.py` review (2026-10-12)
 
-**`main()`이 할 일**: ① `QSurfaceFormat` 알파 설정 (`QApplication`보다 먼저) → ② `QApplication` (프로세스에 하나) → ③ `RugWidget()` → ④ `show()` (요청만) → ⑤ `return app.exec()`
+**What `main()` does**: ① set alpha in `QSurfaceFormat` (before `QApplication`) → ② `QApplication` (one per process) → ③ `RugWidget()` → ④ `show()` (only a request) → ⑤ `return app.exec()`
 
-**이벤트 루프**
-- `app.exec()` 안에서 "OS 이벤트 꺼내기 → 담당 위젯에 전달"을 반복한다. 앱이 끝나야 돌아온다 → 그 다음 줄은 종료 시에만 실행된다.
-- `paintGL`, `mousePressEvent` 등은 우리가 부르지 않고 이벤트 루프가 부른다 (콜백).
+**The event loop**
+- Inside `app.exec()` it repeats "take an OS event → deliver it to the widget in charge". It returns only when the app ends → the next line runs only at exit.
+- `paintGL`, `mousePressEvent`, and the like are not called by us but by the event loop (callbacks).
 
-**Ctrl+C 함정** (MVP 종료 방법 = Ctrl+C)
-- Python은 SIGINT를 Python 코드 실행 중에만 확인하는데, `app.exec()`는 대부분 C++에서 돌아서 Ctrl+C가 무시된다.
-- 해결: `signal.signal(signal.SIGINT, signal.SIG_DFL)` → OS 기본 동작(즉시 종료). 대가: 정리 코드가 실행되지 않음. 트레이를 넣을 때 `app.quit()` 경로를 따로 만든다.
+**The Ctrl+C trap** (MVP quit method = Ctrl+C)
+- Python checks SIGINT only while running Python code, and `app.exec()` mostly runs in C++, so Ctrl+C is ignored.
+- Fix: `signal.signal(signal.SIGINT, signal.SIG_DFL)` → the OS default (exit immediately). Cost: cleanup code does not run. Add a separate `app.quit()` path with the tray.
 
-**플립북 비유: OpenGL 콜백**
+**Flip-book analogy: OpenGL callbacks**
 
-| 실제 | 비유 |
+| Real | Analogy |
 |---|---|
-| `RugWidget` | 화가 |
-| Qt 이벤트 루프 | 미술실 선생님 |
-| OpenGL 컨텍스트 | 책상에 깔린 도화지와 물감 |
-| `__init__` | 출근: 알람(타이머)만 맞춤. 도화지 없음 → 렌더러 못 만듦 |
-| `initializeGL` | 선생님이 도화지를 깔아줌 → 물감 섞기(렌더러 생성), 딱 한 번 |
-| `resizeGL` | 도화지 크기 변경 |
-| `update()` | 손 들기: "다음 장 그릴게요" |
-| `paintGL` | 선생님이 도화지를 깔아준 뒤 "자, 그려" |
+| `RugWidget` | The painter |
+| Qt event loop | The art teacher |
+| OpenGL context | Paper and paint laid out on the desk |
+| `__init__` | Arriving at work: only sets an alarm (timer). No paper → cannot make the renderer |
+| `initializeGL` | The teacher lays out the paper → mix the paints (create the renderer), exactly once |
+| `resizeGL` | The paper changes size |
+| `update()` | Raising a hand: "I'll draw the next page" |
+| `paintGL` | The teacher lays out the paper and says "now draw" |
 
-- 규칙: `paintGL()`을 직접 부르지 않는다. 컨텍스트 준비가 빠져서 엉뚱한 곳에 그린다. 항상 `update()`.
-- 16ms 타이머 → `cloth.step()` → `update()` → `paintGL` ≈ 초당 60장.
+- Rule: never call `paintGL()` directly. Context setup is skipped and it draws in the wrong place. Always `update()`.
+- 16 ms timer → `cloth.step()` → `update()` → `paintGL` ≈ 60 pages per second.
 
-**드래그**
-- 누를 때 `잡은 거리 = 마우스 - 창 왼쪽 위`, 움직일 때 `창 왼쪽 위 = 마우스 - 잡은 거리`.
-- 잡은 거리를 빼먹으면 창이 잡은 거리만큼 순간이동해서 마우스가 창 모서리에 붙는다.
-- 예: 창 (50, 80), 클릭 (150, 130) → 잡은 거리 (100, 50). 마우스 (250, 230) → 창 (150, 180).
-- `mouseReleaseEvent`는 MVP에 불필요: Qt는 버튼을 누르고 있을 때만 `mouseMoveEvent`를 보낸다.
-- 창(투명 필름)은 러그보다 커야 한다: 떨어지며 펄럭이는 부분이 잘리지 않도록.
+**Dragging**
+- On press, `grab offset = mouse - window top-left`; on move, `window top-left = mouse - grab offset`.
+- Forget the offset and the window jumps by it, sticking the mouse to the window's corner.
+- Example: window (50, 80), click (150, 130) → offset (100, 50). Mouse (250, 230) → window (150, 180).
+- `mouseReleaseEvent` is not needed for the MVP: Qt sends `mouseMoveEvent` only while a button is held.
+- The window (a transparent film) must be bigger than the rug, so parts flapping during the fall are not cut off.
 
-### `desktop.py` 리뷰 (2026-10-12)
+### `desktop.py` review (2026-10-12)
 
-- 줄 서기 비유: `HWND_BOTTOM` = "줄 맨 뒤" → Progman보다 뒤로 갈 수 있음. 대신 "Progman 바로 앞 사람 뒤에 서기":
-  `FindWindow("Progman", None)` → `GetWindow(progman, GW_HWNDPREV)` (한 칸 **앞** 사람) → `SetWindowPos(hwnd, 그 사람, ...)`
-- 뼈대 변경 예정: `hide_from_taskbar` 삭제 (`Qt.Tool`), `send_to_bottom` → `place_above_desktop`, `disable_activation` 추가 (`WS_EX_NOACTIVATE`), 모듈 docstring의 `HWND_BOTTOM` 설명 정정.
+- Queue analogy: `HWND_BOTTOM` = "the end of the line" → may go behind Progman. Instead, "stand behind the person right in front of Progman":
+  `FindWindow("Progman", None)` → `GetWindow(progman, GW_HWNDPREV)` (the person one place **ahead**) → `SetWindowPos(hwnd, that person, ...)`
+- Planned skeleton changes: remove `hide_from_taskbar` (`Qt.Tool`), `send_to_bottom` → `place_above_desktop`, add `disable_activation` (`WS_EX_NOACTIVATE`), correct the `HWND_BOTTOM` description in the module docstring.
 
-### `cloth.py` A: 천 = 구슬 + 막대 (2026-10-12)
+### `cloth.py` A: cloth = beads + sticks (2026-10-12)
 
-- 진짜 천은 계산할 수 없으니 **구슬(입자)**과 **막대(제약)**로 단순화한다.
-- 구슬: `(x, y, z)` 위치만 가진다 → `positions` 모양 `(rows, cols, 3)`.
-- 막대: "우리 둘은 이 거리만큼 떨어져 있자"는 약속. 원래 길이 = `spacing`.
+- Real cloth cannot be computed, so it is simplified into **beads (particles)** and **sticks (constraints)**.
+- Bead: only an `(x, y, z)` position → `positions` has shape `(rows, cols, 3)`.
+- Stick: a promise "let's stay this far apart". Rest length = `spacing`.
 
-| 막대 | 잇는 곳 | 없으면 |
+| Stick | Connects | Without it |
 |---|---|---|
-| 구조 | 가로·세로 이웃 | 고무줄처럼 늘어남 |
-| 전단 | 대각선 이웃 | 네모가 마름모로 찌그러짐 |
-| 굽힘 | 두 칸 건너 | 종이처럼 칼같이 접힘. 강하면 두꺼운 담요, 약하면 실크 같은 주름 |
+| Structural | horizontal and vertical neighbours | stretches like a rubber band |
+| Shear | diagonal neighbours | squares squash into diamonds |
+| Bending | two cells apart | folds sharply like paper. Strong = thick blanket, weak = silky wrinkles |
 
-- 시작 상태: 모든 구슬이 `drop_height`에 평평하게 → `step()`마다 중력으로 떨어짐.
-- **구조 막대 개수** (울타리 기둥 원리): 가로 = `rows × (cols − 1)`, 세로 = `cols × (rows − 1)`.
-  예: `rows=3, cols=4` → 가로 3×3 = 9, 세로 4×2 = 8, **합계 17**. ← 3단계 테스트 후보
+- Start: every bead flat at `drop_height` → each `step()` falls under gravity.
+- **Number of structural sticks** (fencepost rule): horizontal = `rows × (cols − 1)`, vertical = `cols × (rows − 1)`.
+  Example: `rows=3, cols=4` → horizontal 3×3 = 9, vertical 4×2 = 8, **total 17**. ← step 3 test candidate
 
-### `cloth.py` B: 다음 위치 예측하기 / Verlet (2026-10-12)
+### `cloth.py` B: predicting the next position / Verlet (2026-10-12)
 
-- 비유: 공 연속 사진 두 장 → "지난번에 움직인 만큼 또 움직인다" + 중력이 이번 장에 추가로 당기는 양.
-- `새 위치 = 현재 + (현재 − 이전) × 감쇠 + 가속도 × dt²`
+- Analogy: two consecutive photos of a ball → "it moves as much as it did last time", plus the extra pull of gravity this frame.
+- `new position = current + (current − previous) × damping + acceleration × dt²`
 
-| 조각 | 의미 |
+| Piece | Meaning |
 |---|---|
-| `현재 − 이전` | 속도 (따로 저장하지 않음) |
-| `× 감쇠` (예: 0.99) | 공기 저항. 없으면 영원히 출렁임 |
-| `가속도 × dt²` | 중력. 이게 있어야 점점 빨라짐 |
+| `current − previous` | Velocity (not stored separately) |
+| `× damping` (e.g. 0.99) | Air resistance. Without it, it bounces forever |
+| `acceleration × dt²` | Gravity. Needed for it to speed up |
 
-- 속도 대신 **이전 위치**를 저장하는 이유: 막대 맞추기·충돌로 구슬을 억지로 옮기면 그만큼이 다음 속도에 저절로 반영된다 → 코드가 짧고 잘 안 터진다.
-- 예제 (감쇠 없음, 중력 −0.01, 이전 5.0, 지금 4.9):
+- Why store the **previous position** instead of velocity: when sticks or collisions force a bead somewhere, that move automatically feeds into the next velocity → short code that rarely blows up.
+- Example (no damping, gravity −0.01, previous 5.0, now 4.9):
 
-| 장 | 높이 | 내려간 거리 |
+| Frame | Height | Distance fallen |
 |---|---|---|
-| 지금 | 4.9 | 0.1 |
+| now | 4.9 | 0.1 |
 | 1 | 4.79 | 0.11 |
 | 2 | 4.67 | 0.12 |
 | 3 | 4.54 | 0.13 |
 
-- 흔한 실수: 중력 항을 빼먹으면 4.8, 4.7, ...처럼 등속 운동이 되고, 처음 속도가 0이면 천이 **공중에 멈춰 있다**. ← 3단계 테스트 후보 ("step 후 z가 줄어드는가", "내려가는 거리가 매번 늘어나는가")
+- Common mistake: drop the gravity term and you get constant speed (4.8, 4.7, ...), and with zero starting speed the cloth **hangs in the air**. ← step 3 test candidates ("does z drop after a step", "does the fall distance grow every step")
 
-### `cloth.py` C: 막대 길이 지키기 / 제약 (2026-10-12)
+### `cloth.py` C: keeping stick lengths / constraints (2026-10-12)
 
-- B만 하면 구슬이 각자 떨어지는 "모래알 비"가 된다. 막대가 구슬을 천으로 묶는다.
-- 비유: 1m 줄자를 잡은 두 친구. **차이를 반으로 나눠 둘이 똑같이** 다가가거나 멀어진다.
-  - 예: 원래 길이 1.0, A = 0.0, B = 1.4 → 0.4 초과 → 각 0.2씩 → A = 0.2, B = 1.2 ← 3단계 테스트 후보
-- 한 막대를 맞추면 이웃 막대가 틀어진다 → 전체를 여러 번(예: 8회) 반복해서 수렴시킨다. 적으면 고무줄처럼 늘어나고, 많으면 느리다.
-- 바닥 충돌: `z < 0`인 구슬은 `z = 0`으로. 이전 위치는 그대로라 아래로 가던 속도가 저절로 사라진다 (Verlet 장점).
-- `step()` 순서: ① Verlet 예측 → ② 막대 맞추기 × N → ③ 바닥 충돌
+- With only B, the beads fall one by one like a "rain of sand". Sticks tie the beads into cloth.
+- Analogy: two friends holding a 1 m tape measure. They **split the difference in half and both** move closer or apart.
+  - Example: rest length 1.0, A = 0.0, B = 1.4 → 0.4 too long → 0.2 each → A = 0.2, B = 1.2 ← step 3 test candidate
+- Fixing one stick bends its neighbours → repeat over everything several times (e.g. 8) to converge. Too few and it stretches like rubber; too many and it is slow.
+- Floor collision: beads with `z < 0` go to `z = 0`. The previous position stays, so the downward velocity disappears by itself (a Verlet advantage).
+- `step()` order: ① Verlet prediction → ② stick solving × N → ③ floor collision
 
-### `cloth.py` 뼈대 리뷰 (2026-10-12)
+### `cloth.py` skeleton review (2026-10-12)
 
-- `Attributes:`의 `positions` 설명 삭제 → 프로퍼티 docstring에만 둔다 (중복은 한쪽만 고쳐져 어긋난다).
-- 숨은 숫자는 모듈 상수로: `DAMPING`, `GRAVITY`, `CONSTRAINT_ITERATIONS`. 테스트에 필요해지면 그때 생성자 인자로 올린다 (premature abstraction 피하기).
-- `dt`는 **고정값 1/60초**로 넘긴다.
-  - 이유: Verlet은 "지난번 움직인 거리"를 재사용한다. 사진 간격이 16ms → 32ms로 두 배가 되면 실제로는 두 배를 움직여야 하는데 Verlet은 지난번(16ms) 거리만큼만 움직인다 → 갑자기 느려진다. 반대로 간격이 줄면 너무 많이 움직여서 에너지가 생기고 천이 터질 수 있다.
-  - 대가: 컴퓨터가 버벅이면 애니메이션이 조금 느려질 뿐, 천은 안정적이다.
+- Removed the `positions` description from `Attributes:` → keep it only in the property docstring (duplicates drift when only one is updated).
+- Hidden numbers become module constants: `DAMPING`, `GRAVITY`, `CONSTRAINT_ITERATIONS`. Promote them to constructor arguments when tests need it (avoid premature abstraction).
+- `dt` is passed as a **fixed 1/60 s**.
+  - Why: Verlet reuses "the distance moved last time". If the photo interval doubles from 16 ms to 32 ms, the bead should move twice as far, but Verlet moves only the previous (16 ms) distance → it suddenly slows down. If the interval shrinks, it moves too far, gains energy, and the cloth can explode.
+  - Cost: when the computer stutters, the animation just slows down a little; the cloth stays stable.
 
-### PR #6 리뷰 반영 (2026-10-12)
+### Addressing PR #6 review (2026-10-12)
 
-ECC `python-reviewer`로 리뷰하고 Claude가 다시 확인했다.
+Reviewed with ECC `python-reviewer`, then double-checked by Claude.
 
-- **pywin32 예외**: `pywintypes.error`의 부모는 `Exception`이다. `OSError`가 아니다. 그래서 문서에 `OSError`라고 쓰려면 직접 바꿔서 올려야 한다.
-- **줄 서기 함정**: Progman 바로 앞 사람이 "항상 맨 앞" 무리(topmost)일 수 있다 → 그 뒤에 서면 나도 그 무리가 된다 → 앞으로 걸어가며 topmost는 건너뛴다.
-- **리뷰어와 다르게 판단한 것**: `mouseReleaseEvent`는 추가하지 않았다. 근거는 "Qt는 버튼을 누를 때만 move를 보낸다". 대신 "왼쪽 버튼일 때만 이동"을 명시했다. 리뷰어 의견을 그대로 받지 않고 근거를 대서 반박할 수 있다.
-- **스위치는 있는데 전원이 꺼진 설정**: `[tool.ruff.lint.pydocstyle]`는 `"D"`를 켜야 동작한다. 켠 뒤 docstring 없는 함수에 `D103`이 뜨는 것을 확인했다.
-- `renderer.py`의 GPU 정리(`release()`)와 `draw()` 입력 검증은 `renderer.py` 리뷰 때 다룬다.
+- **pywin32 exceptions**: the parent of `pywintypes.error` is `Exception`, not `OSError`. To document `OSError`, errors must be converted and raised by hand.
+- **Queue trap**: the person right in front of Progman may belong to the "always in front" group (topmost) → standing behind them makes you a member too → walk forward and skip topmost windows.
+- **Where we disagreed with the reviewer**: `mouseReleaseEvent` was not added, on the grounds that "Qt sends move only while a button is held". Instead, "move only with the left button" was made explicit. A reviewer's point can be rebutted with evidence instead of accepted as is.
+- **A switch with the power off**: `[tool.ruff.lint.pydocstyle]` works only with `"D"` enabled. After enabling it, `D103` showed up on functions without docstrings.
+- GPU cleanup (`release()`) and `draw()` input validation in `renderer.py` are handled in the `renderer.py` review.
 
-### `renderer.py` 학습과 리뷰 (2026-10-12)
+### `renderer.py` learning and review (2026-10-12)
 
-**A. 점 잇기**
-- GPU는 삼각형만 칠한다. 격자의 네모 1칸 = 삼각형 2개 → 메시.
-- 점 잇기 그림책: ① 점 위치(`positions`, 매 프레임 바뀜) ② 어느 점끼리 이을지 번호 목록(인덱스, 안 바뀜).
-- 개수 (울타리 기둥 원리):
+**A. Connect the dots**
+- The GPU only fills triangles. One grid square = two triangles → a mesh.
+- A connect-the-dots book: ① dot positions (`positions`, change every frame) ② the list of which dots to connect (indices, never change).
+- Counts (fencepost rule):
 
-| | 공식 | rows=3, cols=4 | rows=40, cols=30 |
+| | Formula | rows=3, cols=4 | rows=40, cols=30 |
 |---|---|---|---|
-| 구슬 | `rows × cols` | 12 | 1200 |
-| 네모 칸 | `(rows − 1) × (cols − 1)` | 6 | 1131 |
-| 세모 | `2 × (rows − 1) × (cols − 1)` | 12 | 2262 |
+| Beads | `rows × cols` | 12 | 1200 |
+| Squares | `(rows − 1) × (cols − 1)` | 6 | 1131 |
+| Triangles | `2 × (rows − 1) × (cols − 1)` | 12 | 2262 |
 
-- 흔한 실수: 구슬 개수(12)를 칸 개수로 착각. ← 렌더러 테스트 후보 ("인덱스의 삼각형 수")
+- Common mistake: confusing the bead count (12) with the square count. ← renderer test candidate ("number of triangles in the indices")
 
-**B. 법선과 조명**
-- 손전등과 구겨진 종이: 빛을 정면으로 받는 면은 밝고, 비스듬하면 어둡다 → 주름이 보인다.
-- 법선 = 면이 바라보는 방향(면에 꽂은 이쑤시개). 밝기 = `max(0, 법선 · 빛)`.
-  여기서 빛 = **면에서 광원을 향하는** 방향(지금은 전등 위치 − 면 위치). "빛이 오는 방향"으로 읽고 부호를 뒤집으면 밝고 어두운 곳이 반대가 된다.
-- 천이 움직이면 법선도 바뀌므로 매 프레임 다시 계산한다.
-- 평평한 러그 + 바로 위 빛 = 전체가 같은 밝기 → 빛을 비스듬히 둔다.
+**B. Normals and lighting**
+- A flashlight and crumpled paper: faces that take the light head-on are bright; slanted ones are dark → wrinkles show.
+- Normal = the direction a face looks (a toothpick stuck into it). Brightness = `max(0, normal · light)`.
+  Here light = the direction **from the face to the light source** (now lamp position − face position). Read it as "where the light comes from" and flip the sign, and bright and dark swap.
+- When the cloth moves the normals change, so they are recomputed every frame.
+- A flat rug + light straight above = the same brightness everywhere → put the light at an angle.
 
-**C. GPU 외주 공장**
+**C. The GPU as an outsourced factory**
 
-| 실제 | 비유 |
+| Real | Analogy |
 |---|---|
-| 셰이더 | 공장 직원에게 주는 작업 지시서 (`__init__`에서 컴파일) |
-| 버퍼 | 공장에서 빌린 창고 칸 (위치, 법선, 번호 목록) |
-| `release()` | 창고 반납. 컨텍스트가 활성일 때만 가능 → `aboutToBeDestroyed` → `makeCurrent()` → `release()` → `doneCurrent()` |
+| Shader | Work instructions for the factory staff (compiled in `__init__`) |
+| Buffer | A storage bay rented at the factory (positions, normals, index list) |
+| `release()` | Returning the bays. Only possible while the context is current → `aboutToBeDestroyed` → `makeCurrent()` → `release()` → `doneCurrent()` |
 
-- `draw()` 입력 검사: 모양 `(rows, cols, 3)`, `float32`(numpy 기본은 `float64`라 실수하기 쉬움), C-contiguous(한 덩어리로 복사).
+- `draw()` input checks: shape `(rows, cols, 3)`, `float32` (numpy defaults to `float64`, an easy mistake), C-contiguous (copied in one piece).
 
-### PR #7 리뷰 반영 (2026-10-12)
+### Addressing PR #7 review (2026-10-12)
 
-- **모듈 사이 약속은 양쪽에 다 적는다**: 렌더러는 "한 덩어리(C-contiguous) `float32`만 받는다"고 했는데, 천의 `positions`는 그걸 약속하지 않았다 → 천 쪽에도 같은 약속을 적었다. 주고받는 두 사람이 같은 계약서를 들고 있어야 한다.
-- **반납 후 규칙**: 첫 `release()`만 컨텍스트가 필요하고, 다시 부르면 아무 일도 안 한다. 반납 후 `draw`/`resize`는 `RuntimeError`.
-- **아직 없는 렌더러**: `self._renderer`는 `initializeGL` 전까지 `None` → `paintGL`과 반납 슬롯은 `None`이면 아무것도 안 한다.
-- **소수 배율**: `devicePixelRatio()`는 1.25처럼 소수일 수 있다 → `int()`(버림)가 아니라 `round()`(반올림).
-- **크기 0**: 최소화된 창은 0을 줄 수 있다 → `resize`는 무시 (0으로 나누기 방지).
-- 남은 미검증: 반납 슬롯에서 `makeCurrent()`가 실패하는 경우.
+- **Write a contract between modules on both sides**: the renderer said "only C-contiguous `float32`", but the cloth's `positions` did not promise it → the same promise was added on the cloth side. Both parties need the same contract in hand.
+- **Rules after release**: only the first `release()` needs a context; calling again does nothing. `draw`/`resize` after release raise `RuntimeError`.
+- **A renderer that does not exist yet**: `self._renderer` is `None` until `initializeGL` → `paintGL` and the release slot do nothing when it is `None`.
+- **Fractional scaling**: `devicePixelRatio()` can be fractional like 1.25 → `round()`, not `int()` (truncation).
+- **Zero size**: a minimised window can report 0 → `resize` ignores it (avoids division by zero).
+- Still unverified: `makeCurrent()` failing inside the release slot.
 
-### 2단계: 데스크톱 창 구현 결과 (2026-10-12)
+### Step 2: desktop window results (2026-10-12)
 
-**무엇을 만들었나**: 반투명 갈색 둥근 사각형("자리표시 러그")이 바탕화면 아이콘 위, 다른 앱 아래에 뜬다. 왼쪽 드래그로 옮긴다. 천과 렌더러는 아직 없다.
+**What was built**: a translucent brown rounded rectangle (the "placeholder rug") floats above the desktop icons and below other apps. Left-drag moves it. No cloth or renderer yet.
 
-**Win32로 직접 읽어서 확인한 것** (앱을 4초 띄우고 검사)
+**Verified by reading Win32 state directly** (app shown for 4 s, then inspected)
 
-| 항목 | 결과 |
+| Item | Result |
 |---|---|
-| `WS_EX_TOOLWINDOW` (작업표시줄 숨김, `Qt.Tool`) | 켜짐 |
-| `WS_EX_NOACTIVATE` | 켜짐 |
-| `WS_EX_TOPMOST` | 꺼짐 |
-| `WS_EX_LAYERED` | 켜짐 (Qt가 투명 창에 켬) |
-| 러그와 Progman 사이 창 개수 | 0 → Progman 바로 앞 |
-| 포커스를 뺏었나 | 아니오 |
+| `WS_EX_TOOLWINDOW` (hidden from taskbar, `Qt.Tool`) | on |
+| `WS_EX_NOACTIVATE` | on |
+| `WS_EX_TOPMOST` | off |
+| `WS_EX_LAYERED` | on (Qt sets it for transparent windows) |
+| Windows between the rug and Progman | 0 → right in front of Progman |
+| Stole focus? | no |
 
-**사용자 확인**: 실행해 보고 "잘 된다". 항목별(여백 클릭 통과, 모두 최소화, 바탕화면 빈 곳 클릭, Win+D) 결과는 따로 받지 않았으므로 해당 열린 질문은 그대로 둔다.
+**Maintainer check**: ran it, "works well". Per-item results (clicks through the margin, minimise all, click empty desktop, Win+D) were not reported, so those open questions stay open.
 
-**구현하며 새로 안 것**
-- pywin32의 `GetWindowLong`/`SetWindowLong`은 잘못된 hwnd에도 **에러 없이 0**을 돌려준다(`SetWindowPos`, `GetWindow`는 에러). → 먼저 `IsWindow`로 확인한다.
-- `FindWindow`는 못 찾으면 0을 돌려준다(에러 아님).
-- Windows 가상환경의 `python.exe`는 진짜 Python을 자식 프로세스로 띄우는 런처라, 창 주인 PID가 다르다.
-- 테스트가 쓸모 있는지 확인하는 법: 일부러 버그를 넣어서 실패하는지 본다. "덮어쓰기" 버그를 넣자 `test_disable_activation_keeps_existing_style_bits`가 실패했다.
+**Learned while implementing**
+- pywin32's `GetWindowLong`/`SetWindowLong` return **0 without error** for an invalid hwnd (`SetWindowPos`, `GetWindow` do raise). → check with `IsWindow` first.
+- `FindWindow` returns 0 when nothing is found (not an error).
+- On Windows a venv's `python.exe` is a launcher that starts the real Python as a child process, so the window owner's PID differs.
+- How to check that a test is useful: plant a bug on purpose and see it fail. Planting the "overwrite" bug made `test_disable_activation_keeps_existing_style_bits` fail.
 
-**임시로 둔 것** (4·5단계에서 교체)
-- `paintGL`의 `_paint_placeholder()` (렌더러가 생기면 제거)
-- `initializeGL`은 아직 렌더러를 만들지 않는다
-- 프레임 타이머 없음 (움직일 천이 없으므로)
+**Temporary for now** (replaced in steps 4 and 5)
+- `_paint_placeholder()` in `paintGL` (removed once the renderer exists)
+- `initializeGL` does not create the renderer yet
+- No frame timer (no cloth to move)
 
-### 러그 텍스처와 두께 (2026-10-12)
+### Rug texture and thickness (2026-10-12)
 
-**3D 모델 분석** (CGTrader "Blue Rug", OBJ)
-- 점 329,314개(우리 천의 약 275배), 사각형 면만, 빈틈없이 닫힌 한 조각.
-- 윗면·아랫면 두 겹 + 얇은 옆면 = 두툼한 판. 술 장식 없음.
-- 윗면 높낮이를 그려 보니 사선 주름이 **조각된 채 굳어 있다** → "구겨진 순간을 찍은 조각상".
-- 텍스처는 ambientCG "Carpet006"(파란 체크, 반복 무늬). 색·노멀맵·거칠기·AO·높이 맵이 다 있다.
+**3D model analysis** (CGTrader "Blue Rug", OBJ)
+- 329,314 points (about 275× our cloth), quad faces only, one closed piece without gaps.
+- Top and bottom layers + thin sides = a thick slab. No tassels.
+- Plotting the top surface's height shows diagonal wrinkles **sculpted and frozen in place** → "a statue of the moment it was crumpled".
+- The texture is ambientCG "Carpet006" (blue check, repeating pattern). It has colour, normal, roughness, AO, and height maps.
 
-**마네킹 옷 vs 진짜 천**: 3D 모델 파일에는 "모양"만 있고 "어떻게 휘는지"는 없다. 그래서 모양은 우리 천이 만들고, 모델에서는 겉모습(텍스처)만 빌린다(B).
+**Mannequin clothes vs real cloth**: a 3D model file holds only the "shape", not "how it bends". So our cloth makes the shape, and only the look (texture) is borrowed from the model (B).
 
-**라이선스는 받은 곳마다 다르다**: 무료 모델이어도 CGTrader는 재배포 금지. 같은 텍스처의 원본(ambientCG, CC0)을 찾아서 썼다.
+**Licenses differ by where you got it**: even a free model on CGTrader cannot be redistributed. The original of the same texture (ambientCG, CC0) was found and used instead.
 
-**시험해 보고 고른 것**: 모델처럼 텍스처 한 장을 펼친 큰 체크 + 각진 모서리도 만들어 봤지만, 평평한 상태에서는 밋밋했다. 큰 무늬는 주름과 그림자가 있어야 산다.
+**Tried, then chosen**: a big check (one texture spread like the model) with square corners was also built, but looked plain when flat. Big patterns need wrinkles and shadows to come alive.
 
-**두께 (김밥 김 vs 두툼한 담요)**
+**Thickness (seaweed sheet vs thick blanket)**
 
-| 두꺼워 보이는 이유 | 흉내 내는 법 | 단계 |
+| Why it looks thick | How to fake it | Step |
 |---|---|---|
-| ① 옆면이 보인다 | 렌더러가 면을 ±두께/2로 두 장 그리고 가장자리를 띠로 잇기 (Solidify) | 4 |
-| ② 크고 둥글게 접힌다 | 굽힘 막대를 강하게 | 3 |
-| ③ 바닥에서 두께만큼 떠 있다 | 바닥 충돌 높이를 두께/2만큼 올리기 | 3 |
-| ④ 접힌 곳 밑 그림자 | 조명 + 노멀맵 | 4 |
+| ① The sides are visible | The renderer draws two faces ±thickness/2 apart and joins the edges with a band (Solidify) | 4 |
+| ② It folds big and round | Stronger bending sticks | 3 |
+| ③ It rests a thickness above the floor | Raise the floor collision by thickness/2 | 3 |
+| ④ Shadows under folds | Lighting + normal map | 4 |
 
-- 물리는 한 겹 그대로라 빠르고, 두 겹이 따로 노는 문제가 없다.
-- 바로 위에서 보면 옆면이 안 보인다 → 카메라를 살짝 기울이거나 주름이 서야 두께가 보인다.
-- `RUG_THICKNESS` 상수 하나를 `cloth.py`(충돌 높이)와 `renderer.py`(두 장 간격)가 같이 쓴다.
+- Physics stays one layer, so it is fast, and the two layers never drift apart.
+- Seen straight from above, the sides are invisible → tilt the camera slightly or wait for wrinkles to stand up to see the thickness.
+- One `RUG_THICKNESS` constant is shared by `cloth.py` (collision height) and `renderer.py` (gap between the two faces).
 
-### PR #9 리뷰 반영 (2026-10-12)
+### Addressing PR #9 review (2026-10-12)
 
-- **약속은 모든 길에서 지킨다**: docstring에 "pywin32 에러는 `OSError`로"라고 썼는데 `place_above_desktop`에만 `try/except`가 있었다. `disable_activation`에도 넣었다. 한 함수에서 지킨 약속이 옆 함수에서는 빠지기 쉽다.
-- **매 프레임 만드는 물건은 미리 만든다**: 텍스처 붓(`QBrush`)을 `__init__`에서 한 번만 만든다. 60fps면 1초에 60번 새로 만들게 된다.
-- **`try/finally`로 뒷정리 보장**: 그리다가 에러가 나도 `painter.end()`는 반드시 실행된다.
-- **Win32 헬퍼가 실패하면 그대로 종료**(결정): 바탕화면에 붙지 못한 러그는 다른 앱 위에 떠서 고장 난 것처럼 보인다. 이유가 바로 보이는 에러가 더 낫다. 친절한 메시지는 나중에.
-- 바꾼 뒤 화면을 다시 그려 보니 바이트까지 같았다 → 동작은 그대로, 구조만 개선.
+- **Keep a promise on every path**: the docstring said "pywin32 errors become `OSError`", but only `place_above_desktop` had the `try/except`. Added it to `disable_activation` too. A promise kept in one function is easy to miss in the next.
+- **Build per-frame objects in advance**: the texture brush (`QBrush`) is made once in `__init__`. At 60 fps it would otherwise be rebuilt 60 times a second.
+- **Guarantee cleanup with `try/finally`**: `painter.end()` always runs, even if drawing raises.
+- **Exit if the Win32 helpers fail** (decision): a rug that cannot attach to the desktop floats over other apps and looks broken. An error that shows the reason at once is better. Friendlier messages later.
+- After the change, a redraw matched byte for byte → same behaviour, better structure.
 
-### 3단계: 천 시뮬레이션 (2026-10-12)
+### Step 3: cloth simulation (2026-10-12)
 
-**테스트 = 학습 노트의 숫자 문제 그대로** (`tests/test_cloth.py`, 5개)
+**Tests = the learning notes' number problems as they are** (`tests/test_cloth.py`, 5 tests)
 
-| 노트 | 테스트 |
+| Note | Test |
 |---|---|
-| 울타리 기둥 | 40×30, 간격 0.1 → 구슬 1200개, 2.9 × 3.9 |
-| 막대 개수 | 3×4 구조 막대 17개 |
-| Verlet 높이 | 4.79 → 4.67 → 4.54 |
-| 중력 빼먹기 | 스텝마다 내려가는 거리가 늘어난다 |
-| 줄자 친구 | 1.0 / 0.0 / 1.4 → 0.2 / 1.2 |
+| Fencepost | 40×30, spacing 0.1 → 1200 beads, 2.9 × 3.9 |
+| Stick count | 17 structural sticks for 3×4 |
+| Verlet heights | 4.79 → 4.67 → 4.54 |
+| Forgotten gravity | The fall distance grows every step |
+| Tape-measure friends | 1.0 / 0.0 / 1.4 → 0.2 / 1.2 |
 
-**구현하며 새로 안 것**
-- **홀짝 묶음**: 한 사람이 두 짝에 동시에 끌려가면 한쪽 결과가 사라진다. 묶음마다 겹치는 구슬 0개를 확인했다(12개 묶음).
-- **수평으로 떨어진 이불은 수평으로 앉는다**: 처음 구현은 테스트를 다 통과했지만 주름이 전혀 없었다. 테스트가 통과해도 "원하는 모습"인지는 따로 봐야 한다.
-- **마찰은 위치로**: 속도만 줄이면 막대 맞추기가 바닥 구슬을 미끄러뜨린다. 이번 스텝의 가로 이동 자체를 취소해야 먼저 닿은 쪽이 붙잡힌다.
-- 실험 결과 (0.3 m에서 4초):
+**Learned while implementing**
+- **Odd/even batches**: if one person is pulled by two partners at once, one result is lost. Confirmed 0 shared beads within every batch (12 batches).
+- **A blanket dropped level lands level**: the first implementation passed every test but had no wrinkles at all. Passing tests does not mean it looks right; check that separately.
+- **Friction as position**: only slowing the velocity lets the stick solver slide floor beads. Cancel this step's sideways move itself, so the side that lands first is held.
+- Experiment (4 s from 0.3 m):
 
-| 마찰 | 자세 | 가장 높은 곳 | 크기 |
+| Friction | Pose | Highest point | Size |
 |---|---|---|---|
-| slide | flat | 0 cm (평평) | 1.17 × 0.72 |
-| grip | tilted (기본값) | **약 3.3 cm** | 1.09 × 0.72 |
+| slide | flat | 0 cm (flat) | 1.17 × 0.72 |
+| grip | tilted (default) | **about 3.3 cm** | 1.09 × 0.72 |
 
-**보는 법**: `uv run python tools/cloth_preview.py` — 옆모습 + 위에서 본 높이 지도, `f`/`t`/`r` 키로 비교. 상수(`FLOOR_FRICTION`, `DROP_TILT`, `BENDING_STIFFNESS`)는 화면 연결 후 조금씩 조정한다.
+**How to look**: `uv run python tools/cloth_preview.py` — side view + top-down height map; compare with the `f`/`t`/`r` keys. Constants (`FLOOR_FRICTION`, `DROP_TILT`, `BENDING_STIFFNESS`) are tuned bit by bit once on screen.
 
-**테스트 안 된 동작** (나중에 케이스 설계): 바닥 아래로 안 뚫기, grip 마찰, `tilt`, 입력 검증(`ValueError`), `positions` 읽기 전용.
+**Untested behaviour** (cases to design later): not falling through the floor, grip friction, `tilt`, input validation (`ValueError`), read-only `positions`.
 
-### 원작 영상처럼 다시 설계 (2026-10-12)
+### Redesign after the original video (2026-10-12)
 
-**영상에서 본 것** (`assets/rug/reference/rug.mp4`, 커밋 안 함): 위에서 내려다본 페르시아 러그, 모서리를 잡아 끌면 접히며 끌려옴, 바탕화면 어디든 이동, 파일을 덮음, 파일 위에서 불룩.
+**What the video shows** (`assets/rug/reference/rug.mp4`, not committed): a Persian rug seen from above; grab a corner and drag, and it folds as it is pulled; it moves anywhere on the desktop; covers files; bumps up over files.
 
-**바뀐 구조**
-- 창 = 화면 전체(작업표시줄 제외) 투명 무대. 커서가 러그 위에 있을 때만 클릭을 받고, 나머지는 바탕화면으로 통과.
-- 왼쪽 누름 → 가장 가까운 구슬을 잡아 3 cm 들어 올림 → 끌기 → 놓기. 창 끌기는 없어졌다.
-- 아이콘 위치를 탐색기 메모리에서 2초마다 읽어(`desktop_icon_rects`), 높이 2 cm 언덕으로 바닥에 깐다.
-- 화면 가장자리는 벽.
+**New structure**
+- Window = a transparent stage covering the whole screen (minus the taskbar). It takes clicks only while the cursor is over the rug; everything else passes through to the desktop.
+- Left press → grab the nearest bead and lift it 3 cm → drag → release. Window dragging is gone.
+- Icon positions are read from Explorer's memory every 2 s (`desktop_icon_rects`) and laid on the floor as 2 cm hills.
+- The screen edges are walls.
 
-**문제와 해결 (숫자로)**
+**Problems and fixes (in numbers)**
 
-| 문제 | 원인 (비유) | 해결 | 결과 |
+| Problem | Cause (analogy) | Fix | Result |
 |---|---|---|---|
-| 끌면 늘어남 | 손은 순간이동하는데 나머지는 마찰에 붙잡힘 (고무줄) | 마찰 먼저 → 막대 나중 + 끈 묶기 | 11.6× → 1.07× |
-| 접힌 층이 뚫고 지나감 | 그물코 사이로 구슬이 빠짐 | 높이를 덜 쳐서 넉넉한 간격 + 매 반복 밀어내기 | 719 → 0쌍 |
-| 메시가 보임 | 점이 2 cm 간격 | 그릴 때만 Catmull-Rom으로 3배 | 톱니 없는 접힌 선 |
-| 느림 | 번호 목록 복사, 범용 곡선 함수 | 슬라이스, 미리 만든 행렬, 쉬기 | 스텝 10 → 5 ms(단독), 곡선 15.5 → 0.25 ms |
+| Stretches when dragged | The hand teleports while the rest is held by friction (rubber band) | Friction first → sticks after + tether | 11.6× → 1.07× |
+| Folded layers pass through | Beads slip through the mesh holes | Discounted height for a generous gap + push apart every iteration | 719 → 0 pairs |
+| Mesh is visible | Points are 2 cm apart | 3× Catmull-Rom only when drawing | Folded lines without jaggies |
+| Slow | Index-list copies, a generic curve function | Slices, precomputed matrices, sleeping | Step 10 → 5 ms (standalone), curve 15.5 → 0.25 ms |
 
-**측정 (끄는 중, 이 PC)**: 프레임 간격 약 24 ms, 스텝 약 15 ms, 그리기 약 4 ms. 단독 실행보다 앱 안에서 스텝이 느린 건 큰 투명 창 합성과 CPU를 나눠 쓰기 때문으로 보인다(추측).
+**Measured (while dragging, this PC)**: frame interval about 24 ms, step about 15 ms, draw about 4 ms. The step is slower inside the app than standalone, probably because compositing the big transparent window shares the CPU (a guess).
 
-**캡처에서 배운 함정**: `grabFramebuffer()` 이미지는 "2배 고해상도" 표시가 붙어 있어서, `QPainter`로 합치면 절반 크기로 그려진다 → `setDevicePixelRatio(1)`.
+**A capture trap**: `grabFramebuffer()` images are tagged "2× high resolution", so combining them with `QPainter` draws them at half size → `setDevicePixelRatio(1)`.
 
-**테스트 안 된 새 동작** (사용자가 나중에 설계): `screen_to_world`, `bump_heights`, `nearest_particle`, `grab`/끈 묶기, 벽, 자기 충돌, `subdivide_grid`.
+**Untested new behaviour** (maintainer will design later): `screen_to_world`, `bump_heights`, `nearest_particle`, `grab`/tether, walls, self-collision, `subdivide_grid`.
 
-### PR #11 리뷰 반영 (2026-10-12)
+### Addressing PR #11 review (2026-10-12)
 
-- **쉬기가 2초마다 깨던 문제**: 아이콘을 2초마다 읽을 때 바뀌지 않아도 깨웠다 → 이전 값과 같으면 그대로 둔다.
-- **탐색기가 멈추면 러그도 멈춤**: `SendMessage`는 답을 끝까지 기다린다 → `SendMessageTimeout`(200 ms). 시간 초과면 예전 아이콘을 쓴다.
-- **에러가 매 프레임 반복**: 타이머 안에서 난 `OSError`는 한 번만 기록하고 계속 동작한다. 클릭 통과 상태는 실패해도 기록해서 16 ms마다 재시도하지 않는다.
-- **여러 모니터**: 아이콘 좌표를 목록창의 화면 위치(`ClientToScreen`)로 보정하고 `mapFromGlobal`로 창 좌표로 바꾼다(모니터마다 배율이 다른 경우는 미검증).
-- **화면이 바뀌면 벽도 따라감**: `availableGeometryChanged` → 창 크기와 벽을 다시 맞추고 깨운다.
-- 그 밖: 그림자를 지울 때 남은 셰이더 삭제, 곡면을 `einsum` 대신 행렬곱 두 번, 정밀 타이머, 놓친 버튼 떼기 감지, 깊이 버퍼 명시, Win32 함수 원형 한 번만 만들기.
+- **Sleep broken every 2 s**: reading icons every 2 s woke the rug even when nothing changed → keep it asleep when the value is the same as before.
+- **Explorer hangs, rug hangs**: `SendMessage` waits for an answer forever → `SendMessageTimeout` (200 ms). On timeout the old icons are used.
+- **An error repeated every frame**: an `OSError` inside a timer is logged once and the app keeps going. The click-through state is recorded even on failure so it is not retried every 16 ms.
+- **Multiple monitors**: icon coordinates are offset by the list view's screen position (`ClientToScreen`) and mapped to window coordinates with `mapFromGlobal` (monitors with different scaling unverified).
+- **The walls follow screen changes**: `availableGeometryChanged` → refit the window size and walls, and wake up.
+- Also: delete the leftover shader when removing the shadow, two matrix products instead of `einsum` for the surface, a precise timer, detect a missed button release, request a depth buffer explicitly, build Win32 function prototypes once.
 
-### 트레이 앱, 크기와 무게, 그림자, 위층 잡기 (2026-10-12)
+### Tray app, size and weight, shadow, grabbing the top layer (2026-10-12)
 
-**실행과 끄기**
-- `pyproject.toml`의 `[project.gui-scripts]` → `uv sync`가 콘솔 없는 `.venv\Scripts\rug-window.exe`를 만든다. 터미널용은 `rug-window-console`.
-- `tools/make_shortcut.py`가 바로가기를 만든다(아이콘: `tools/make_icon.py`가 CC0 카펫 텍스처로 그린 `assets/rug.ico`).
-- 알림 영역 트레이 아이콘(`tray.py`): 클릭하면 메뉴 — 러그 숨기기/보이기, 끄기. 창이 없어도 앱이 살아 있도록 `setQuitOnLastWindowClosed(False)`.
-- 이름 붙은 뮤텍스로 두 번 실행을 막는다. 콘솔이 없으니 로그는 `%LOCALAPPDATA%\rug-window\rug-window.log`.
+**Running and quitting**
+- `[project.gui-scripts]` in `pyproject.toml` → `uv sync` builds a console-less `.venv\Scripts\rug-window.exe`. The terminal one is `rug-window-console`.
+- `tools/make_shortcut.py` makes a shortcut (icon: `assets/rug.ico`, drawn by `tools/make_icon.py` from the CC0 carpet texture).
+- Notification-area tray icon (`tray.py`): click for a menu — Hide rug / Show rug, Quit. (Originally Korean labels; switched to English when the repo went public.) `setQuitOnLastWindowClosed(False)` keeps the app alive with no window.
+- A named mutex prevents running twice. With no console, logs go to `%LOCALAPPDATA%\rug-window\rug-window.log`.
 
-**크기와 무게**
-- `PX_PER_METRE` 450 → 600: 러그가 화면에서 1.33배(면적 1.78배).
-- 무게(`GRAB_FOLLOW`): 0.25를 면적 비율로 나눈 0.14 근처에서 사용자 느낌대로 0.12 → 0.15. 마찰 0.7. 잡은 점은 한 프레임 최대 5 cm(초당 3 m).
+**Size and weight**
+- `PX_PER_METRE` 450 → 600: the rug is 1.33× bigger on screen (1.78× the area).
+- Weight (`GRAB_FOLLOW`): 0.25 divided by the area ratio gives about 0.14; set from 0.12 to 0.15 by the maintainer's feel. Friction 0.7. The grabbed point moves at most 5 cm per frame (3 m/s).
 
-**끊김 (빠르게 휘두를 때)**
-- 자기 충돌이 평평한 이웃까지 수천 쌍을 매번 찾고 버렸다 → **들린 구슬 주변만** 찾는다.
-- 결과 모으기·더하기의 파이썬 반복문 → `sparse_distance_matrix`(배열로 받기)와 `bincount`(번호별 합).
-- 앱 안 스텝 33 → 15 ms, 평균 프레임 43 → 28 ms. 남은 비용은 화면 전체 투명 창 합성으로 추정(미검증). 창을 러그 크기로 줄이면 근본 해결.
+**Stutter (when swinging fast)**
+- Self-collision searched and threw away thousands of pairs among flat neighbours every time → search **only around lifted beads**.
+- Python loops to gather and sum results → `sparse_distance_matrix` (results as arrays) and `bincount` (sum by index).
+- In-app step 33 → 15 ms, mean frame 43 → 28 ms. The remaining cost is probably compositing the full-screen transparent window (unverified). Shrinking the window to the rug's size would fix it at the root.
 
-**"안으로 들어가 보임"과 그림자**
-- 계산은 맞게 위로 접히고 있었다(끌린 층 99.8% 위). 위에서 보면 높이가 안 보여서 러그가 줄어드는 것처럼 보였다.
-- 뒷면 색을 시험했지만 사용자는 원래 색을 골랐다. 대신 **그림자를 되살렸다**: 화면 중앙 4 m 전등에서 투영, MAX 섞기로 겹쳐도 진해지지 않음.
+**"It looks like it sinks in" and the shadow**
+- The simulation was folding upward correctly (99.8% of the dragged layer above). Seen from above height is invisible, so the rug seemed to shrink.
+- A back-face colour was tried, but the maintainer kept the original colour. Instead the **shadow came back**: projected from a lamp 4 m above the screen centre, with MAX blending so overlaps do not get darker.
 
-**위층 잡기**: 겹친 곳에서는 마우스 반경 안 **가장 높은 층**(두께 절반 이내)에서 가장 가까운 구슬을 잡는다. 접은 러그의 겹친 곳 15군데 클릭 → 15번 모두 위층.
+**Grabbing the top layer**: where layers overlap, grab the bead closest to the mouse among the **highest layer** (within half a thickness) in the mouse radius. Clicked 15 overlapping spots on a folded rug → top layer all 15 times.
 
-### PR #12 리뷰 반영 (2026-10-12)
+### Addressing PR #12 review (2026-10-12)
 
-- **끌 때 GPU 정리가 안 되던 문제** (실험으로 확인): `del rug`를 해도 신호 연결 같은 참조 때문에 위젯이 바로 지워지지 않아 "컨텍스트가 사라지기 직전" 신호가 오지 않았다 → 끄기 직전에 `RugWidget.shutdown()`이 직접 정리한다. 정리 후에는 렌더러를 비우고 신호를 끊어서, 프로세스가 끝날 때 늦게 오는 신호가 지워진 위젯을 건드리지 않는다.
-- **트레이가 없으면 시작하지 않는다**: 트레이가 유일한 끄는 방법이라, 없으면 로그만 남기고 종료.
-- **다시 보이기**: `attach_to_desktop()`이 Z-order와 활성화 방지를 함께 다시 적용하고 클릭 통과 캐시를 비운다.
-- **숨기면 쉰다**: 숨기면 프레임·아이콘 타이머를 멈추고, 보이면 다시 켠다.
-- **로그**: 맨 먼저 설정(뮤텍스 실패도 기록), UTF-8. 바닥 마찰 0.8(사용자 조정). `*.lnk`는 `.gitignore`.
+- **GPU cleanup missing on quit** (confirmed by experiment): even after `del rug`, references such as signal connections kept the widget alive, so the "context about to be destroyed" signal never came → `RugWidget.shutdown()` cleans up right before quitting. Afterwards it clears the renderer and disconnects the signal, so a late signal at process exit cannot touch a deleted widget.
+- **No tray, no start**: the tray is the only way to quit, so without one the app logs and exits.
+- **Showing again**: `attach_to_desktop()` reapplies the Z-order and activation blocking together and clears the click-through cache.
+- **Hidden means resting**: hiding stops the frame and icon timers; showing restarts them.
+- **Logging**: configured first (so a mutex failure is logged too), UTF-8. Floor friction 0.8 (maintainer's tuning). `*.lnk` is in `.gitignore`.

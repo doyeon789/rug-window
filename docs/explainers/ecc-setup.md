@@ -1,97 +1,101 @@
 # ECC Setup
 
-> 상태: **구현 완료** (ECC v2.2.3 기준)
+> Status: **done** (as of ECC v2.2.3)
+>
+> Note: `.claude/` is no longer tracked in git. It holds the maintainer's
+> local AI-assisted workflow, so the files described here exist only on the
+> maintainer's machine. This document is kept as a record of that setup.
 
-## 1. 개요
+## 1. Overview
 
-[ECC](https://github.com/affaan-m/ECC)는 Claude Code에 스킬, 에이전트, 훅을 한꺼번에 추가해 주는 제3자 플러그인 모음이다.
-이 문서는 이 저장소에 ECC를 어떻게 설정했는지와, 왜 그렇게 정했는지를 적는다.
+[ECC](https://github.com/affaan-m/ECC) is a third-party plugin bundle that adds skills, agents, and hooks to Claude Code in one go.
+This document records how ECC was set up for this repository and why.
 
-참고한 글: [gymcoding — ECC 설치·사용 가이드](https://www.gymcoding.co/articles/ecc-claude-code-install-usage-guide)
+Reference: [gymcoding — ECC install and usage guide](https://www.gymcoding.co/articles/ecc-claude-code-install-usage-guide) (Korean)
 
-이번에 한 일은 세 가지다.
+Three things were done:
 
-1. 플러그인을 켰다. `.claude/settings.json`의 `enabledPlugins`에 `"ecc@ecc": true`를 넣었다.
-2. ECC 규칙 파일 중 이 프로젝트와 맞는 것만 골라 `.claude/rules/ecc/`에 복사했다.
-3. GateGuard 훅을 껐다. 이건 개인 설정 파일(`.claude/settings.local.json`)에서 했고 커밋하지 않는다.
+1. Enabled the plugin: added `"ecc@ecc": true` to `enabledPlugins` in `.claude/settings.json`.
+2. Copied only the ECC rule files that fit this project into `.claude/rules/ecc/`.
+3. Turned off the GateGuard hook. This lives in the personal settings file (`.claude/settings.local.json`) and is not committed.
 
-## 2. 배경 지식
+## 2. Background
 
-### 플러그인을 이루는 네 가지
+### The four parts of a plugin
 
-| 구성 요소 | 하는 일 | 비유 |
+| Part | What it does | Analogy |
 |---|---|---|
-| 스킬 | `/ecc:plan`처럼 필요할 때 불러 쓰는 작업 설명서 | 서랍 속 요리 레시피 |
-| 에이전트 | 특정 역할을 맡는 하위 Claude (예: `ecc:python-reviewer`) | 불러서 일을 맡기는 전문가 |
-| 훅 | 도구를 쓰기 전이나 후에 **자동으로** 실행되는 스크립트 | 현관 센서등: 지나가면 저절로 켜짐 |
-| 규칙(rules) | 세션마다 Claude가 읽는 지침 문서 | 교실 벽에 붙은 반 규칙 |
+| Skill | A task guide you call when needed, like `/ecc:plan` | A recipe in a drawer |
+| Agent | A sub-Claude with a specific role (e.g. `ecc:python-reviewer`) | An expert you call in |
+| Hook | A script that runs **automatically** before or after a tool is used | A porch motion light: it turns on as you walk by |
+| Rules | Guidance documents Claude reads every session | Class rules on the classroom wall |
 
-### 규칙은 자동으로 깔리지 않는다
+### Rules are not installed automatically
 
-플러그인을 설치해도 `rules/` 폴더는 배포되지 않는다. 그래서 직접 복사해야 한다.
-원본은 플러그인 캐시에 이미 있으므로 `git clone`은 필요 없었다.
+Installing the plugin does not deploy its `rules/` folder, so the rules must be copied by hand.
+The originals are already in the plugin cache, so no `git clone` was needed.
 
 ```
 ~/.claude/plugins/cache/ecc/ecc/2.2.3/rules/
 ```
 
-### 훅 프로필과 끄는 방법
+### Hook profiles and how to turn hooks off
 
-ECC 훅에는 강도별 프로필이 있다. 끄는 방법은 세 가지다.
+ECC hooks come in strength profiles. There are three ways to turn them off.
 
-- **프로필 바꾸기**: 환경변수 `ECC_HOOK_PROFILE`에 `minimal`, `standard`(기본값), `strict` 중 하나를 넣는다.
-- **훅 하나만 끄기**: `ECC_DISABLED_HOOKS`에 훅 ID를 쉼표로 이어 적는다.
-- **GateGuard만 끄기**: `ECC_GATEGUARD=off`. 전용 스위치이며, `scripts/hooks/gateguard-fact-force.js`에서 이 값을 읽는 것을 확인했다.
+- **Change the profile**: set the environment variable `ECC_HOOK_PROFILE` to `minimal`, `standard` (default), or `strict`.
+- **Turn off single hooks**: list hook IDs, comma-separated, in `ECC_DISABLED_HOOKS`.
+- **Turn off GateGuard only**: `ECC_GATEGUARD=off`. This is a dedicated switch; `scripts/hooks/gateguard-fact-force.js` was confirmed to read it.
 
-## 3. 구조
+## 3. Structure
 
 ```
 .claude/
-├── settings.json           # enabledPlugins: ecc@ecc  (커밋)
-├── settings.local.json     # env.ECC_GATEGUARD=off   (개인용, 커밋 안 함)
+├── settings.json           # enabledPlugins: ecc@ecc
+├── settings.local.json     # env.ECC_GATEGUARD=off   (personal)
 └── rules/ecc/
     ├── common/   code-review, coding-style, git-workflow, hooks,
     │             patterns, performance, security
     └── python/   coding-style, hooks, patterns, security
 ```
 
-## 4. 설계 결정
+## 4. Design decisions
 
-### 넣지 않은 규칙 파일
+### Rule files left out
 
-| 파일 | 뺀 이유 |
+| File | Why it was left out |
 |---|---|
-| `common/testing.md` | "Claude가 테스트를 먼저 쓰는 TDD + 커버리지 80%"를 강제한다. CLAUDE.md의 "테스트 케이스는 사용자가 설계한다"와 충돌한다. |
-| `common/development-workflow.md` | 같은 TDD 강제에 더해 PRD 같은 추가 문서를 요구한다. |
-| `common/agents.md` | 사용자에게 묻지 않고 에이전트를 바로 실행하라고 한다. 이해를 우선하는 이 프로젝트의 흐름과 맞지 않는다. |
-| `python/testing.md` | `common/testing.md`를 확장한 파일이다. |
-| `python/fastapi.md` | 이 프로젝트와 관련이 없다. |
+| `common/testing.md` | Enforces "Claude writes tests first (TDD) + 80% coverage". Conflicts with the CLAUDE.md rule "the user designs the test cases". |
+| `common/development-workflow.md` | The same TDD enforcement, plus extra documents such as a PRD. |
+| `common/agents.md` | Tells Claude to run agents without asking the user. Does not fit this project's understanding-first flow. |
+| `python/testing.md` | Extends `common/testing.md`. |
+| `python/fastapi.md` | Not relevant to this project. |
 
-### 전역 대신 프로젝트에 둔 이유
+### Why in the project instead of globally
 
-참고한 글은 `~/.claude/rules/ecc/`(전역)에 두라고 권한다. 이 저장소에서는 프로젝트 안에 두었다.
+The reference article suggests `~/.claude/rules/ecc/` (global). Here they were put inside the project.
 
-- 다른 프로젝트에는 영향을 주지 않는다.
-- git에 남기 때문에 어떤 규칙을 썼는지 리뷰하고 되돌릴 수 있다.
+- They do not affect other projects.
+- At the time they were in git, so the chosen rules could be reviewed and reverted.
 
-### GateGuard만 끈 이유
+### Why only GateGuard was turned off
 
-GateGuard는 세션에서 처음 명령을 실행하거나 파일을 수정할 때마다 "확인 사항을 먼저 적어라"라며 작업을 막는다.
-계획 모드와 CLAUDE.md 규칙이 이미 비슷한 확인 역할을 하고 있어서, 중복으로 걸리는 단계만 늘어났다.
-위험한 명령을 막는 검사 같은 나머지 훅은 `standard` 프로필 그대로 둔다.
+GateGuard blocks the first command or file edit in each session with "write down your checks first".
+Plan mode and the CLAUDE.md rules already play a similar checking role, so it only added a duplicate step.
+The other hooks, such as the dangerous-command check, stay on the `standard` profile.
 
-## 5. 주의할 점
+## 5. Caveats
 
-### 남아 있는 작은 충돌 — CLAUDE.md가 우선한다
+### Small remaining conflicts: CLAUDE.md wins
 
-복사한 파일은 원본을 그대로 유지했고, 수정하지 않았다. 그래서 아래 문장들이 남아 있다.
+The copied files were kept exactly as the originals, unmodified, so these sentences remain:
 
-- `common/code-review.md`: 체크리스트에 "커버리지 80%"가 있다.
-- `python/coding-style.md`, `python/hooks.md`: black, mypy를 언급한다. 이 프로젝트는 Ruff를 쓴다.
+- `common/code-review.md`: its checklist includes "80% coverage".
+- `python/coding-style.md`, `python/hooks.md`: mention black and mypy. This project uses Ruff.
 
-### 그 밖에
+### Other notes
 
-- `code-review.md`와 `git-workflow.md`는 넣지 않은 파일(`testing.md`, `agents.md`, `development-workflow.md`)로 링크한다. 이 링크는 깨져 있다.
-- 복사본은 플러그인을 업데이트해도 따라 바뀌지 않는다. 업데이트 후 필요하면 다시 복사한다.
-- 관찰 훅 같은 일부 훅은 세션 기록을 `~/.claude/` 아래에 남긴다. 이 기록은 로컬에만 저장된다.
-- **미검증**: 프로젝트의 `.claude/rules/`가 전역 `~/.claude/rules/`와 똑같이 로드되는지는 아직 확인하지 않았다. 새 세션에서 확인한다.
+- `code-review.md` and `git-workflow.md` link to files that were left out (`testing.md`, `agents.md`, `development-workflow.md`). Those links are broken.
+- The copies do not follow plugin updates. Copy again after an update if needed.
+- Some hooks, such as the observation hooks, write session records under `~/.claude/`. These stay local.
+- **Unverified**: whether the project's `.claude/rules/` loads exactly like the global `~/.claude/rules/`. To be checked in a new session.
