@@ -33,9 +33,10 @@ PX_PER_METRE: Final = 600.0
 # drawn as translucent black underneath. Projection pushes the shadow away
 # from the screen centre by ``height / (LIGHT_HEIGHT - height)`` of the
 # point's distance from it, so raised parts (folds, a held corner) cast a
-# longer shadow. A flat rug is treated as raised by SHADOW_BASE_HEIGHT so it
-# still casts a thin rim of shadow.
-SHADOW_BASE_HEIGHT: Final = 0.08
+# longer shadow. SHADOW_BASE_HEIGHT adds a pretend height to every point; it
+# is 0 so a rug lying flat casts no visible rim (the user found the grey band
+# along the edges distracting), and only lifted parts throw a shadow.
+SHADOW_BASE_HEIGHT: Final = 0.0
 SHADOW_OPACITY: Final = 0.35
 # Toward-camera depth range (metres) kept by the depth buffer.
 _DEPTH_RANGE = 2.0
