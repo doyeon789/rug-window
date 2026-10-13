@@ -49,6 +49,13 @@ uv run python tools/build_release.py # build the release zip
 
 Design notes and learning notes: `docs/explainers/rug-window.md`.
 
+## Contributing
+
+Bug reports, ideas, and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as
+described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT (see `LICENSE`). Bundled third-party software and assets are listed in
