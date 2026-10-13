@@ -1,0 +1,59 @@
+name: Bug report
+description: Something does not work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Security problems go through
+        [private reporting](https://github.com/doyeon789/rug-window/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead? Screenshots or a short recording help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start RugWindow.exe
+        2. Drag the rug's corner over ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Rug Window version
+      placeholder: v0.1.0, or a commit hash if run from source
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: scaling
+    attributes:
+      label: Display setup
+      description: Display scaling and number of monitors (Settings → System → Display).
+      placeholder: 150%, one monitor
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      placeholder: Intel Iris Xe / NVIDIA RTX 4050 / ...
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Relevant lines from `%LOCALAPPDATA%\rug-window\rug-window.log`.
+      render: text
