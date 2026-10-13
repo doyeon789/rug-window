@@ -1,6 +1,6 @@
 [project]
 name = "rug-window"
-version = "0.1.2"
+version = "0.1.3"
 description = "Sweep your messy desktop under a 3D cloth rug."
 readme = "README.md"
 requires-python = ">=3.11"
