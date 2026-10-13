@@ -33,9 +33,19 @@ GRAB_MAX_STEP = 0.05
 # grid spacing covers every point inside the rug.
 RUG_HIT_RADIUS = RUG_SPACING
 ICON_REFRESH_MS = 2000
-# Once nothing has moved more than this (metres per frame) for this many
-# frames, the rug is settled and the simulation sleeps until it is touched.
-SETTLED_DISPLACEMENT = 2e-5
+# Once SETTLED_PERCENTILE % of the particles move less than this (metres per
+# frame; 0.5 mm is 0.3 logical px at PX_PER_METRE = 600) for this many frames,
+# the rug is settled and the simulation sleeps until it is touched. Friction
+# never cancels all movement, so a folded or crumpled rug keeps creeping open
+# while it is simulated; the old rule ("every particle under 0.02 mm") never
+# fired for it, and the rug spread out by itself. Measured: a fold now stops
+# in about 1 s, a crumpled pile in 3-11 s.
+# Trade-off: the remaining 1% (about 22 particles, an 8 x 10 cm patch) may
+# still be moving when the rug falls asleep, and is frozen until the next
+# wake. A falling flap moves far faster than this and lands within a few
+# frames, so in practice that is a slow, nearly settled patch.
+SETTLED_DISPLACEMENT = 5e-4
+SETTLED_PERCENTILE = 99  # percent, 0..100
 IDLE_FRAMES_BEFORE_SLEEP = 30
 
 logger = logging.getLogger(__name__)
@@ -267,7 +277,8 @@ class RugWidget(QOpenGLWidget):
             self._update_click_through()
             return
         self._cloth.step(FRAME_DT)
-        if self._cloth.max_displacement() < SETTLED_DISPLACEMENT:
+        moved = self._cloth.displacement_percentile(SETTLED_PERCENTILE)
+        if moved < SETTLED_DISPLACEMENT:
             self._idle_frames += 1
         else:
             self._idle_frames = 0

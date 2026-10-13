@@ -67,6 +67,47 @@ for a moment, releases, and watches for 5 seconds.
 Step time while dragging: about 5–6 ms in both versions (no measurable cost,
 since the pairs are reused).
 
+### Follow-up: sleep when visibly still (fix/fold-creep)
+
+After v0.1.1 the maintainer noticed the rug still kept moving and slowly
+spreading out. Watching for a full minute (the first measurements stopped at
+5 s) showed it: a released fold crept open by about 10 cm a minute, and a
+rug crumpled by a quick flick kept shifting forever. Neither ever went to
+sleep, because the sleep rule needed *every* particle under 0.02 mm per
+frame, and friction never cancels all movement: floor friction (0.8) and
+layer friction cancel part of it before the constraint passes, so the steady
+push of a fold's squeezed bending constraints leaks through every step.
+Tracking every particle showed the whole rug sliding over the floor together,
+about 5 mm a second. Analogy: a door held at 80% against a steady wind still
+creeps open.
+
+Tried and rejected (fold = corner folded and released; pile = rug crumpled by
+a quick flick, four random flicks):
+
+| Approach | Fold | Pile | Verdict |
+|---|---|---|---|
+| v0.1.1 as is | 10 cm a minute, never sleeps | keeps shifting, never sleeps | the bug |
+| Static friction on floor and layers (slips under 0.5 mm per step put back) | stops at 0.3 cm | hundreds of particles jitter up to 8 mm per frame, forever | worse: snapping layers back fights the constraints and self-collision |
+| Static friction on the floor only | creeps 9 cm, then stops | some piles never stop | not enough |
+| Plastic bending (rest lengths drift toward the current shape) | keeps creeping | unstable, up to 26 mm per frame | rejected |
+| **Sleep when 99% of particles move under 0.5 mm per frame** | **sleeps after 0.8 s** | **sleeps after 3-11 s** | **chosen** |
+
+- `ClothSimulation.displacement_percentile(percent)`: how far particles moved
+  in the last step at a percentile. The 99th percentile ignores the few
+  particles of a pile that keep jostling, which the old rule (fastest
+  particle only, `max_displacement`) did not. `max_displacement` was removed
+  once nothing used it.
+- Trade-off: up to 1% of the particles (about 22, an 8 x 10 cm patch) may
+  still be moving when the rug falls asleep. A falling flap moves far faster
+  than the threshold and lands within a few frames, so in practice this is a
+  slow, nearly settled patch.
+- `rug_widget.py`: `SETTLED_DISPLACEMENT` 0.02 → 0.5 mm per frame (about 0.3
+  px), measured at `SETTLED_PERCENTILE = 99`, for 30 frames. Asleep, the
+  simulation does not run, so nothing can leak.
+- The maintainer chose 0.5 mm over 0.2 mm (piles sleep after 4-18 s): the
+  rug stops sooner, at the cost of a visible "stop" when a slow settle is cut
+  short.
+
 ## 5. Caveats
 
 - **Locked-in stretch**: after a fold settles, 35 of 2,183 edges stay
@@ -78,4 +119,13 @@ since the pairs are reused).
   was noticed on screen.
 - **Feel**: pulling a fold back open could feel heavier, since only the held
   particle is exempt. It felt fine on screen.
+- **Frozen, not at rest**: a sleeping rug is stopped, not balanced. It
+  stays exactly as it is until it is grabbed, the icons change, or the
+  screen changes; then it simulates again and may creep a little before
+  sleeping again.
+- **The leak is still there** while the rug is awake (dragging, the first
+  second after release). Real static friction would remove it; the naive
+  version above did not work for piles.
+- **Measure long enough**: the first version looked fine at 5 s and failed
+  at 60 s. Settling checks should run for a minute.
 - Untested: the maintainer designs the test cases.
