@@ -9,7 +9,7 @@ Only the latest release receives fixes.
 Please do **not** open a public issue for security problems.
 
 Report them privately through GitHub's private vulnerability reporting:
-[Security → Report a vulnerability](https://github.com/doyeon789/rug-window/security/advisories/new).
+[Security → Report a vulnerability](https://github.com/pizza-playground/rug-window/security/advisories/new).
 Include what you found, how to reproduce it, and which version you used.
 
 This is a hobby project maintained by one person, so there is no guaranteed

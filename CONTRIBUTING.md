@@ -9,7 +9,7 @@ opening a public issue.
 
 ## Reporting bugs and ideas
 
-- Search [existing issues](https://github.com/doyeon789/rug-window/issues)
+- Search [existing issues](https://github.com/pizza-playground/rug-window/issues)
   first.
 - Use the issue templates. For bugs, include your Windows version, display
   scaling (e.g. 150%), GPU, and the relevant part of the log at
@@ -22,7 +22,7 @@ Requirements: Windows 10/11, a GPU with OpenGL 3.3, and
 [uv](https://docs.astral.sh/uv/).
 
 ```
-git clone https://github.com/doyeon789/rug-window.git
+git clone https://github.com/pizza-playground/rug-window.git
 cd rug-window
 uv sync
 uv run python -m rug_window   # run from source (quit from the tray icon)

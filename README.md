@@ -12,7 +12,7 @@ OpenGL) and shares no code with it.
 ## Download and run (Windows 10/11)
 
 1. Download `RugWindow-v<version>-windows.zip` from
-   [Releases](https://github.com/doyeon789/rug-window/releases).
+   [Releases](https://github.com/pizza-playground/rug-window/releases).
 2. Unzip it anywhere and double-click `RugWindow.exe`.
    - The exe is not code-signed, so Windows SmartScreen may warn
      ("Unknown publisher"). Choose **More info → Run anyway**.

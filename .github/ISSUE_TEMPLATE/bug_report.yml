@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for reporting! Security problems go through
-        [private reporting](https://github.com/doyeon789/rug-window/security/advisories/new) instead.
+        [private reporting](https://github.com/pizza-playground/rug-window/security/advisories/new) instead.
   - type: textarea
     id: what-happened
     attributes:
