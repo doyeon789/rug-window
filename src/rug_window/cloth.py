@@ -444,6 +444,20 @@ class ClothSimulation:
         """
         return float(np.abs(self._current - self._previous).max())
 
+    def displacement_percentile(self, percent: float) -> float:
+        """Return how far particles moved in the last step, at a percentile.
+
+        ``displacement_percentile(99)`` is the distance that 99% of the
+        particles stayed under (metres). Unlike ``max_displacement``, a few
+        particles that never quite stop (a crumpled pile keeps jostling) do
+        not count.
+
+        Args:
+            percent: Percentile, 0..100.
+        """
+        moved = np.linalg.norm(self._current - self._previous, axis=2)
+        return float(np.percentile(moved, percent))
+
     def step(self, dt: float) -> None:
         """Advance the simulation by one time step.
 
