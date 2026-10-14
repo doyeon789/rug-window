@@ -26,6 +26,7 @@ OpenGL) and shares no code with it.
 | Drag the rug | Press the left button on the rug and move |
 | Fold it | Grab an edge or corner and pull it back over the rug |
 | Hide / show | Tray icon → Hide rug / Show rug |
+| Change the rug | Tray icon → Choose rug image… (any picture; remembered next time) / Use default rug |
 | Quit | Tray icon → Quit |
 
 Clicks off the rug go to the desktop as usual. Only one copy runs at a time.
@@ -59,4 +60,5 @@ described in [SECURITY.md](SECURITY.md).
 ## License
 
 MIT (see `LICENSE`). Bundled third-party software and assets are listed in
-`THIRD_PARTY_NOTICES.md`; the carpet texture is CC0 from ambientCG.
+`THIRD_PARTY_NOTICES.md`; the rug image is a public-domain photo of a
+16th-century carpet from The Met (CC0).
