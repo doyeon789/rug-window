@@ -1,18 +1,29 @@
 """Full-screen transparent stage where the rug lies on the desktop."""
 
 import logging
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRect, Qt, QTimer
-from PySide6.QtGui import QCursor, QGuiApplication, QHideEvent, QMouseEvent, QShowEvent
+from PySide6.QtGui import (
+    QCursor,
+    QGuiApplication,
+    QHideEvent,
+    QImage,
+    QMouseEvent,
+    QShowEvent,
+)
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from rug_window import desktop
 from rug_window.cloth import RUG_THICKNESS, ClothSimulation
 from rug_window.renderer import PX_PER_METRE, ClothRenderer, screen_to_world
+from rug_window.textures import DEFAULT_RUG_TEXTURE, fit_to_rug, load_texture
 
 # 2 cm grid: about 1.18 x 0.72 m, 2,220 particles.
 RUG_ROWS, RUG_COLS, RUG_SPACING = 37, 60, 0.02
+# Width over height of the rug, which every rug image is fitted to.
+RUG_ASPECT = (RUG_COLS - 1) / (RUG_ROWS - 1)
 # Lower than the cloth's default grip so a pulled rug slides along the floor
 # and bunches up, instead of only folding where it is held.
 RUG_FLOOR_FRICTION = 0.8
@@ -96,6 +107,10 @@ class RugWidget(QOpenGLWidget):
         # Resolution, DPI, or taskbar changes move the walls with the screen.
         screen.availableGeometryChanged.connect(self._fit_to_screen)
         self._renderer: ClothRenderer | None = None
+        # The image the rug wears, fitted to its shape. A new one waits in
+        # _pending_image until paintGL, where the GL context is current.
+        self._rug_image = fit_to_rug(load_texture(DEFAULT_RUG_TEXTURE), RUG_ASPECT)
+        self._pending_image: QImage | None = None
         self._idle_frames = 0
         self._is_grabbing = False
         # Where the cursor wants the held point, and where it actually is.
@@ -128,6 +143,27 @@ class RugWidget(QOpenGLWidget):
         desktop.place_above_desktop(hwnd)
         desktop.disable_activation(hwnd)
         self._click_through = None
+
+    def set_rug_image(self, path: Path | None) -> None:
+        """Dress the rug in another image, or in the default one.
+
+        The image is loaded and fitted now, so a bad file fails here and the
+        rug keeps its current image. It reaches the GPU on the next paint,
+        where the GL context is current; a hidden rug shows it when shown
+        again.
+
+        Args:
+            path: Image file to use, or ``None`` for the bundled default.
+
+        Raises:
+            FileNotFoundError: If ``path`` does not exist.
+            ValueError: If the file is not a readable image.
+        """
+        image = load_texture(path if path is not None else DEFAULT_RUG_TEXTURE)
+        self._rug_image = fit_to_rug(image, RUG_ASPECT)
+        self._pending_image = self._rug_image
+        # A sleeping rug does not repaint by itself.
+        self.update()
 
     def shutdown(self) -> None:
         """Stop the timers, hide, and free the GPU resources now.
@@ -172,7 +208,8 @@ class RugWidget(QOpenGLWidget):
         current, and nothing else frees them. The slot does nothing if
         ``self._renderer`` is ``None``.
         """
-        self._renderer = ClothRenderer(RUG_ROWS, RUG_COLS)
+        self._renderer = ClothRenderer(RUG_ROWS, RUG_COLS, self._rug_image)
+        self._pending_image = None
         self.context().aboutToBeDestroyed.connect(self._release_renderer)
 
     def resizeGL(self, width: int, height: int) -> None:  # noqa: N802 - Qt override
@@ -191,12 +228,15 @@ class RugWidget(QOpenGLWidget):
         self._renderer.resize(self.width(), self.height())
 
     def paintGL(self) -> None:  # noqa: N802 - Qt override
-        """Draw the current cloth state.
+        """Draw the current cloth state, first swapping in a new rug image.
 
         Does nothing while ``self._renderer`` is ``None``.
         """
         if self._renderer is None:
             return
+        if self._pending_image is not None:
+            self._renderer.set_texture(self._pending_image)
+            self._pending_image = None
         self._renderer.draw(self._cloth.positions)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
