@@ -18,7 +18,7 @@ Their license texts are in the release's `licenses/` folder.
 | pywin32 | 312 | PSF-style (its own license texts included) | <https://github.com/mhammond/pywin32> |
 | Microsoft Visual C++ runtimes (`vcruntime140*.dll`, `msvcp140*.dll`, `MSVCR100.dll`) | — | Microsoft Visual C++ Redistributable license (redistributable with applications) | <https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files> |
 | PyInstaller bootloader | 6.22 | GPL-2.0 with a bootloader exception (allows distributing bundled apps under any license) | <https://pyinstaller.org/> |
-| "Carpet 006" texture (ambientCG) | — | CC0 1.0 | <https://ambientcg.com/view?id=Carpet006> |
+| "Carpet", ca. 1550, Egypt (The Metropolitan Museum of Art, 452309), rug image and app icon | — | Public domain, CC0 1.0 (The Met Open Access) | <https://www.metmuseum.org/art/collection/search/452309> |
 
 ## Qt / PySide6 (LGPL-3.0)
 

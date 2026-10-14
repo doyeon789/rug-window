@@ -1,9 +1,16 @@
 # Bundled assets
 
-## carpet006_color.jpg
+## met_452309_carpet.jpg
 
-- Source: ambientCG, "Carpet 006", 1K JPG, Color map
-  <https://ambientcg.com/view?id=Carpet006>
-- License: Creative Commons CC0 1.0 Universal (public domain dedication)
-  <https://docs.ambientcg.com/license/>
-- Changes: renamed from `Carpet006_1K-JPG_Color.jpg`; content unchanged.
+- Source: The Metropolitan Museum of Art, "Carpet", ca. 1550, Egypt,
+  object 452309, photograph `DT5456.jpg`
+  <https://www.metmuseum.org/art/collection/search/452309>
+- License: public domain, released by The Met's Open Access program under
+  Creative Commons CC0 1.0 Universal
+  <https://www.metmuseum.org/policies/image-resources>
+- Changes: cut out of the studio background, turned a quarter turn, and
+  resized to 2048 x 1250 by `tools/make_rug_texture.py`.
+
+## rug.ico
+
+- Drawn by `tools/make_icon.py` from `met_452309_carpet.jpg` (same license).

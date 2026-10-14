@@ -16,7 +16,6 @@ from OpenGL.GL import shaders
 from PySide6.QtGui import QImage
 
 from rug_window.cloth import RUG_THICKNESS
-from rug_window.textures import DEFAULT_RUG_TEXTURE, load_texture
 
 # One lamp hangs this high (metres) above the centre of the screen. Faces
 # turned toward it are bright, faces turned away are darker, which is what
@@ -45,9 +44,6 @@ _DEPTH_RANGE = 2.0
 # fitted points. Physics stays at the coarse grid; only drawing gets finer, so
 # triangle edges and saw-toothed folds no longer show.
 RENDER_SUBDIVISIONS: Final = 3
-# How many grid cells one copy of the carpet texture spans. 27 cells of 2 cm
-# match the checker size of the earlier flat placeholder.
-TEXTURE_CELLS_PER_TILE: Final = 27.0
 
 _VERTEX_SHADER = """
 #version 330 core
@@ -160,9 +156,14 @@ def _boundary_ring(rows: int, cols: int) -> NDArray[np.intp]:
 
 
 def solid_mesh_layout(
-    rows: int, cols: int, cells_per_tile: float = TEXTURE_CELLS_PER_TILE
+    rows: int, cols: int
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """Return the parts of the thick mesh that never change: UVs and indices.
+
+    One image covers the whole rug once: the first column gets ``u = 0`` and
+    the last ``u = 1``. Rows run up the screen (``y`` grows upward) while
+    image rows run down, so the first row gets ``v = 1`` and the last
+    ``v = 0``; otherwise the picture would be upside down.
 
     Vertex order matches ``solidify``: top face, bottom face, then the rim's
     top and bottom copies for the side band.
@@ -170,15 +171,16 @@ def solid_mesh_layout(
     Args:
         rows: Number of particle rows.
         cols: Number of particle columns.
-        cells_per_tile: Grid cells covered by one copy of the texture.
 
     Returns:
-        ``(uvs, indices)``: texture coordinates ``(n, 2)`` and a flat triangle
-        index list.
+        ``(uvs, indices)``: texture coordinates ``(n, 2)`` in ``0..1`` and a
+        flat triangle index list.
     """
     count = rows * cols
     r, c = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
-    grid_uv = np.stack([c, r], axis=-1).reshape(-1, 2) / cells_per_tile
+    u = c / (cols - 1)
+    v = 1 - r / (rows - 1)
+    grid_uv = np.stack([u, v], axis=-1).reshape(-1, 2)
     ring = _boundary_ring(rows, cols)
 
     uvs = np.concatenate([grid_uv, grid_uv, grid_uv[ring], grid_uv[ring]])
@@ -347,12 +349,14 @@ class ClothRenderer:
         cols: Grid columns given at construction; ``draw`` checks against it.
     """
 
-    def __init__(self, rows: int, cols: int) -> None:
+    def __init__(self, rows: int, cols: int, texture: QImage) -> None:
         """Compile shaders and allocate GPU buffers for a fixed-size grid.
 
         Args:
             rows: Number of particles along y.
             cols: Number of particles along x.
+            texture: Image stretched once over the whole rug. Pass it through
+                ``fit_to_rug`` first so it has the rug's proportions.
 
         Raises:
             ValueError: If ``rows`` or ``cols`` is less than 2, since at least
@@ -385,11 +389,7 @@ class ClothRenderer:
         )
         self._render_rows = (rows - 1) * RENDER_SUBDIVISIONS + 1
         self._render_cols = (cols - 1) * RENDER_SUBDIVISIONS + 1
-        uvs, indices = solid_mesh_layout(
-            self._render_rows,
-            self._render_cols,
-            TEXTURE_CELLS_PER_TILE * RENDER_SUBDIVISIONS,
-        )
+        uvs, indices = solid_mesh_layout(self._render_rows, self._render_cols)
         self._index_count = len(indices)
         # The top face comes first in the index list; the shadow uses only it.
         self._top_index_count = (
@@ -405,7 +405,7 @@ class ClothRenderer:
         )
         GL.glBindVertexArray(0)
 
-        self._texture = self._upload_texture(load_texture(DEFAULT_RUG_TEXTURE))
+        self._texture = self._upload_texture(texture)
         self._mvp_location = GL.glGetUniformLocation(self._program, "mvp")
         self._light_location = GL.glGetUniformLocation(self._program, "light_position")
         GL.glUseProgram(self._program)
@@ -516,6 +516,20 @@ class ClothRenderer:
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
 
+    def set_texture(self, texture: QImage) -> None:
+        """Replace the rug's image. Needs the owning context to be current.
+
+        Args:
+            texture: The new image, already passed through ``fit_to_rug``.
+
+        Raises:
+            RuntimeError: If called after ``release``.
+        """
+        self._require_alive()
+        new_texture = self._upload_texture(texture)
+        GL.glDeleteTextures([self._texture])
+        self._texture = new_texture
+
     def release(self) -> None:
         """Free the shaders and GPU buffers.
 
@@ -563,9 +577,12 @@ class ClothRenderer:
             pixels,
         )
         GL.glGenerateMipmap(GL.GL_TEXTURE_2D)
+        # The image covers the rug exactly once (UVs 0..1). Clamping keeps
+        # the edge pixels from blending with the opposite edge, which
+        # repeating would do at the rug's rim.
         for name, value in (
-            (GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT),
-            (GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT),
+            (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE),
+            (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE),
             (GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR_MIPMAP_LINEAR),
             (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
         ):

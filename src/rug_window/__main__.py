@@ -13,6 +13,7 @@ import winerror
 from PySide6.QtGui import QIcon, QSurfaceFormat
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
+from rug_window import settings
 from rug_window.rug_widget import RugWidget
 from rug_window.textures import ASSETS_DIR
 from rug_window.tray import RugTray
@@ -73,6 +74,22 @@ def _configure_logging() -> None:
     sys.excepthook = log_uncaught
 
 
+def _restore_rug_image(rug: RugWidget) -> None:
+    """Dress the rug in the image chosen last time, if it still loads.
+
+    A file that was moved, deleted, or broken since is forgotten (logged),
+    and the rug keeps the default image instead of failing to start.
+    """
+    path = settings.saved_rug_image()
+    if path is None:
+        return
+    try:
+        rug.set_rug_image(path)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning("Saved rug image unusable, using the default: %s", exc)
+        settings.save_rug_image(None)
+
+
 def main() -> int:
     """Start the rug in the background with a tray icon to control it.
 
@@ -89,8 +106,9 @@ def main() -> int:
     5. Create ``QApplication`` (kept alive with no visible window, since the
        rug can be hidden from the tray). Give up if there is no system tray:
        the tray is the only way to quit.
-    6. Create ``RugWidget``, ``show()`` it, then ``attach_to_desktop()``
-       (needs the native window, which exists only after ``show()``).
+    6. Create ``RugWidget``, dress it in the image chosen last time (if it
+       still loads), ``show()`` it, then ``attach_to_desktop()`` (needs the
+       native window, which exists only after ``show()``).
     7. Add the tray icon and run ``app.exec()``. Afterwards shut the rug
        down while the application still exists, so its GPU resources are
        released with a live context.
@@ -116,6 +134,7 @@ def main() -> int:
         logger.error("No system tray: the rug could not be turned off, not starting")
         return 1
     rug = RugWidget()
+    _restore_rug_image(rug)
     rug.show()
     # Let OSError propagate: a rug that cannot sit on the desktop is broken,
     # and the log says why.

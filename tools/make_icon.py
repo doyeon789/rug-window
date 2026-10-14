@@ -4,22 +4,26 @@ Run from the repository root:
 
     uv run python tools/make_icon.py
 
-Writes ``src/rug_window/assets/rug.ico``. The icon is derived from the CC0
-carpet texture bundled next to it.
+Writes ``src/rug_window/assets/rug.ico``. The icon is derived from the
+public-domain carpet image bundled next to it (``DEFAULT_RUG_TEXTURE``).
 """
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import (
-    QBrush,
     QColor,
     QGuiApplication,
     QImage,
     QPainter,
+    QPainterPath,
     QPen,
-    QTransform,
 )
 
-from rug_window.textures import ASSETS_DIR, DEFAULT_RUG_TEXTURE, load_texture
+from rug_window.textures import (
+    ASSETS_DIR,
+    DEFAULT_RUG_TEXTURE,
+    fit_to_rug,
+    load_texture,
+)
 
 SIZE = 256
 
@@ -41,16 +45,15 @@ def main() -> None:
         y = rug.top() + 8 + i * (rug.height() - 16) / 8
         painter.drawLine(int(rug.left()) - 18, int(y), int(rug.left()), int(y))
         painter.drawLine(int(rug.right()), int(y), int(rug.right()) + 18, int(y))
-    # Soft shadow, then the carpet with a light border band.
+    # Soft shadow, then the whole carpet image (it has its own border).
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(0, 0, 0, 70))
-    painter.drawRoundedRect(rug.translated(6, 8), 10, 10)
-    brush = QBrush(load_texture(DEFAULT_RUG_TEXTURE))
-    brush.setTransform(QTransform.fromScale(0.35, 0.35))
-    painter.setBrushOrigin(rug.topLeft())
-    painter.setBrush(brush)
-    painter.setPen(QPen(QColor(200, 175, 120), 8))
-    painter.drawRoundedRect(rug, 10, 10)
+    painter.drawRoundedRect(rug.translated(6, 8), 8, 8)
+    carpet = fit_to_rug(load_texture(DEFAULT_RUG_TEXTURE), rug.width() / rug.height())
+    clip = QPainterPath()
+    clip.addRoundedRect(rug, 8, 8)
+    painter.setClipPath(clip)
+    painter.drawImage(rug, carpet)
     painter.end()
 
     out = ASSETS_DIR / "rug.ico"
